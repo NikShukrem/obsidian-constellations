@@ -207,8 +207,13 @@ export function layoutGalaxy(universes: UniverseGroup[]): void {
 			const maxW = Math.max(...weights);
 			for (const star of looseStars) {
 				const pull = normalizedWeight(star, minW, maxW);
+				// A floor keeps stars from literally stacking on top of each
+				// other at the exact center (which used to blow up into giant
+				// overlapping sprites once the camera flew in close).
 				const dist =
-					universe.radius * (0.2 + 0.5 * (1 - pull)) * Math.pow(Math.random(), 1.8);
+					universe.radius *
+					(0.15 + 0.55 * Math.pow(Math.random(), 1.35)) *
+					(0.55 + 0.45 * (1 - pull));
 				star.position
 					.copy(universe.center)
 					.add(randomOnSphereDirection().multiplyScalar(dist));

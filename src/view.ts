@@ -22,7 +22,8 @@ import type ConstellationsPlugin from "../main";
 export const VIEW_TYPE_CONSTELLATIONS = "constellations-view";
 
 const DUST_BACKGROUND_COLOR = new THREE.Color(0x6c7086);
-const STAR_LABEL_DISTANCE = 55;
+const STAR_LABEL_DISTANCE = 26;
+const MAX_VISIBLE_STAR_LABELS = 22;
 const TAG_LABEL_DISTANCE = 140;
 const DEFAULT_CAMERA_POS = new THREE.Vector3(0, 60, 160);
 const DEFAULT_CAMERA_TARGET = new THREE.Vector3(0, 0, 0);
@@ -34,18 +35,22 @@ const COMET_TRAIL_SPACING = 15;
 const STAR_VERTEX_SHADER = /* glsl */ `
 	attribute vec3 color;
 	attribute float aPhase;
+	attribute float aDim;
 	uniform float uTime;
 	uniform float uSize;
 	uniform float uScale;
+	uniform float uMaxSize;
 	varying vec3 vColor;
 	varying float vAlpha;
 
 	void main() {
 		vColor = color;
 		float twinkle = 0.6 + 0.4 * sin(uTime * 1.7 + aPhase * 6.2831853);
-		vAlpha = twinkle;
+		vAlpha = twinkle * aDim;
 		vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-		gl_PointSize = uSize * uScale / -mvPosition.z;
+		// Clamped so a star the camera happens to fly right next to doesn't
+		// blow up into a giant blob covering half the screen.
+		gl_PointSize = min(uSize * uScale / -mvPosition.z, uMaxSize);
 		gl_Position = projectionMatrix * mvPosition;
 	}
 `;
@@ -78,6 +83,7 @@ const JET_VERTEX_SHADER = /* glsl */ `
 	uniform vec3 uPerpV;
 	uniform float uSize;
 	uniform float uScale;
+	uniform float uMaxSize;
 	varying float vAlpha;
 
 	void main() {
@@ -87,7 +93,7 @@ const JET_VERTEX_SHADER = /* glsl */ `
 		vec3 pos = uOrigin + offset;
 		vAlpha = sin(t * 3.14159265);
 		vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
-		gl_PointSize = uSize * uScale / -mvPosition.z;
+		gl_PointSize = min(uSize * uScale / -mvPosition.z, uMaxSize);
 		gl_Position = projectionMatrix * mvPosition;
 	}
 `;
@@ -162,9 +168,15 @@ export class ConstellationsView extends ItemView {
 	private camera: THREE.PerspectiveCamera | null = null;
 	private controls: OrbitControls | null = null;
 	private glowTexture: THREE.Texture | null = null;
+	private starTexture: THREE.Texture | null = null;
 	private starLayers: THREE.Points[] = [];
 	private starMaterials: THREE.ShaderMaterial[] = [];
 	private starsByLayer: StarNode[][] = [];
+	private starIndex = new Map<string, { layer: number; vertexIndex: number }>();
+	private searchQuery = "";
+	private searchActive = false;
+	private searchMatches = new Set<string>();
+	private searchDebounce: number | null = null;
 	private pointScale = 800;
 	private raycaster = new THREE.Raycaster();
 	private pointer = new THREE.Vector2();
@@ -249,6 +261,32 @@ export class ConstellationsView extends ItemView {
 		};
 		document.addEventListener("click", this.onDocumentClick);
 
+		const searchInput = toolbar.createEl("input", {
+			cls: "ct-search-input",
+			type: "text",
+			placeholder: "Найти заметку или #тег…",
+		});
+		searchInput.addEventListener("input", () => {
+			const value = searchInput.value;
+			if (this.searchDebounce !== null) window.clearTimeout(this.searchDebounce);
+			this.searchDebounce = window.setTimeout(() => {
+				this.searchDebounce = null;
+				this.applySearch(value);
+			}, 120);
+		});
+		searchInput.addEventListener("keydown", (ev) => {
+			ev.stopPropagation();
+			if (ev.key === "Enter") {
+				ev.preventDefault();
+				this.applySearch(searchInput.value);
+				this.flyToFirstMatch();
+			} else if (ev.key === "Escape") {
+				searchInput.value = "";
+				this.applySearch("");
+				searchInput.blur();
+			}
+		});
+
 		this.initScene(mount);
 		this.rebuild();
 
@@ -273,6 +311,7 @@ export class ConstellationsView extends ItemView {
 		if (this.animationHandle) cancelAnimationFrame(this.animationHandle);
 		if (this.idleTimer !== null) window.clearTimeout(this.idleTimer);
 		if (this.rebuildTimer !== null) window.clearTimeout(this.rebuildTimer);
+		if (this.searchDebounce !== null) window.clearTimeout(this.searchDebounce);
 		for (const timer of this.changeDebounceTimers.values()) window.clearTimeout(timer);
 		document.removeEventListener("click", this.onDocumentClick);
 		this.resizeObserver?.disconnect();
@@ -281,6 +320,7 @@ export class ConstellationsView extends ItemView {
 		this.renderer?.domElement.remove();
 		this.labelRenderer?.domElement.remove();
 		this.glowTexture?.dispose();
+		this.starTexture?.dispose();
 		for (const comet of this.comets) {
 			comet.trail.geometry.dispose();
 			(comet.trail.material as THREE.Material).dispose();
@@ -342,6 +382,7 @@ export class ConstellationsView extends ItemView {
 
 		scene.add(new THREE.AmbientLight(0xffffff, 1.2));
 		this.glowTexture = this.createGlowTexture();
+		this.starTexture = this.createSparkleTexture();
 		this.addBackgroundDust(scene);
 
 		this.scene = scene;
@@ -388,12 +429,66 @@ export class ConstellationsView extends ItemView {
 		return new THREE.CanvasTexture(canvas);
 	}
 
+	/** A soft core plus four (and four fainter diagonal) diffraction spikes —
+	 * the "aesthetic sparkle star" look, not just a blurry dot. Stays grayscale
+	 * so the per-star hue tint from the shader still comes through. */
+	private createSparkleTexture(): THREE.Texture {
+		const size = 256;
+		const canvas = document.createElement("canvas");
+		canvas.width = size;
+		canvas.height = size;
+		const ctx = canvas.getContext("2d");
+		if (ctx) {
+			const cx = size / 2;
+			const cy = size / 2;
+
+			const halo = ctx.createRadialGradient(cx, cy, 0, cx, cy, size / 2);
+			halo.addColorStop(0, "rgba(255,255,255,1)");
+			halo.addColorStop(0.16, "rgba(255,255,255,0.9)");
+			halo.addColorStop(0.4, "rgba(255,255,255,0.22)");
+			halo.addColorStop(1, "rgba(255,255,255,0)");
+			ctx.fillStyle = halo;
+			ctx.fillRect(0, 0, size, size);
+
+			ctx.globalCompositeOperation = "lighter";
+
+			const drawSpike = (length: number, width: number, alpha: number) => {
+				const grad = ctx.createLinearGradient(cx - length, cy, cx + length, cy);
+				grad.addColorStop(0, "rgba(255,255,255,0)");
+				grad.addColorStop(0.5, `rgba(255,255,255,${alpha})`);
+				grad.addColorStop(1, "rgba(255,255,255,0)");
+				ctx.fillStyle = grad;
+				ctx.fillRect(cx - length, cy - width / 2, length * 2, width);
+			};
+
+			const spikeAt = (angle: number, length: number, width: number, alpha: number) => {
+				ctx.save();
+				ctx.translate(cx, cy);
+				ctx.rotate(angle);
+				ctx.translate(-cx, -cy);
+				drawSpike(length, width, alpha);
+				ctx.restore();
+			};
+
+			spikeAt(0, size * 0.5, size * 0.045, 0.9);
+			spikeAt(Math.PI / 2, size * 0.5, size * 0.045, 0.9);
+			spikeAt(Math.PI / 4, size * 0.34, size * 0.02, 0.35);
+			spikeAt((3 * Math.PI) / 4, size * 0.34, size * 0.02, 0.35);
+		}
+		return new THREE.CanvasTexture(canvas);
+	}
+
+	/** Purely decorative backdrop — deliberately kept far outside the range
+	 * any real universe can reach (see the spacing math in layout.ts) and
+	 * rendered without size attenuation, so it can never drift close enough
+	 * to be mistaken for a clickable note the way it used to when it shared
+	 * the same distance range as actual content. */
 	private addBackgroundDust(scene: THREE.Scene): void {
-		const count = 2500;
+		const count = 3000;
 		const geometry = new THREE.BufferGeometry();
 		const positions = new Float32Array(count * 3);
 		for (let i = 0; i < count; i++) {
-			const radius = 400 + Math.random() * 1600;
+			const radius = 3000 + Math.random() * 6000;
 			const theta = Math.random() * Math.PI * 2;
 			const phi = Math.acos(2 * Math.random() - 1);
 			positions[i * 3] = radius * Math.sin(phi) * Math.cos(theta);
@@ -403,10 +498,12 @@ export class ConstellationsView extends ItemView {
 		geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
 		const material = new THREE.PointsMaterial({
 			color: DUST_BACKGROUND_COLOR,
-			size: 1.2,
-			sizeAttenuation: true,
+			size: 1.3,
+			sizeAttenuation: false,
 			transparent: true,
-			opacity: 0.5,
+			opacity: 0.3,
+			depthWrite: false,
+			fog: false,
 		});
 		scene.add(new THREE.Points(geometry, material));
 	}
@@ -440,7 +537,7 @@ export class ConstellationsView extends ItemView {
 
 		const head = new THREE.Sprite(
 			new THREE.SpriteMaterial({
-				map: this.glowTexture ?? undefined,
+				map: this.starTexture ?? undefined,
 				color: 0xbfd8ff,
 				transparent: true,
 				blending: THREE.AdditiveBlending,
@@ -538,6 +635,8 @@ export class ConstellationsView extends ItemView {
 		this.starLayers = [];
 		this.starMaterials = [];
 		this.starsByLayer = [];
+		this.starIndex.clear();
+		this.searchMatches.clear();
 		this.stars = [];
 		this.starLabels = [];
 		this.tagLabels = [];
@@ -655,12 +754,12 @@ export class ConstellationsView extends ItemView {
 	}
 
 	private addStars(stars: StarNode[]): void {
-		if (!this.scene || !this.glowTexture || stars.length === 0) return;
+		if (!this.scene || !this.starTexture || stars.length === 0) return;
 		const weights = stars.map((s) => s.weight);
 		const minWeight = Math.min(...weights);
 		const maxWeight = Math.max(...weights);
 
-		const tierSizes = [3.2, 5.2, 8];
+		const tierSizes = [4, 6.5, 10];
 		const buckets: {
 			positions: number[];
 			colors: number[];
@@ -685,6 +784,7 @@ export class ConstellationsView extends ItemView {
 
 		buckets.forEach((bucket, tier) => {
 			if (bucket.positions.length === 0) return;
+			const tierSize = tierSizes[tier];
 			const geometry = new THREE.BufferGeometry();
 			geometry.setAttribute(
 				"position",
@@ -695,12 +795,17 @@ export class ConstellationsView extends ItemView {
 				"aPhase",
 				new THREE.Float32BufferAttribute(bucket.phases, 1)
 			);
+			geometry.setAttribute(
+				"aDim",
+				new THREE.Float32BufferAttribute(new Array(bucket.stars.length).fill(1), 1)
+			);
 			const material = new THREE.ShaderMaterial({
 				uniforms: {
 					uTime: { value: 0 },
-					uSize: { value: tierSizes[tier] },
+					uSize: { value: tierSize },
 					uScale: { value: this.pointScale },
-					uMap: { value: this.glowTexture },
+					uMaxSize: { value: 46 },
+					uMap: { value: this.starTexture },
 				},
 				vertexShader: STAR_VERTEX_SHADER,
 				fragmentShader: STAR_FRAGMENT_SHADER,
@@ -711,24 +816,29 @@ export class ConstellationsView extends ItemView {
 			const points = new THREE.Points(geometry, material);
 			points.userData.isGalaxyContent = true;
 			this.scene!.add(points);
+			const layerIndex = this.starLayers.length;
 			this.starLayers.push(points);
 			this.starMaterials.push(material);
 			this.starsByLayer.push(bucket.stars);
+			bucket.stars.forEach((star, vertexIndex) => {
+				this.starIndex.set(star.id, { layer: layerIndex, vertexIndex });
+			});
 		});
 
 		this.addQuasar(stars, minWeight, maxWeight);
+		this.applySearch(this.searchQuery);
 	}
 
 	/** The single heaviest-weighted note in the vault becomes a quasar: an
 	 * always-visible beacon with a pulsating halo and two particle jets along
 	 * a hue-hashed (so it's stable across rebuilds) axis. */
 	private addQuasar(stars: StarNode[], minWeight: number, maxWeight: number): void {
-		if (!this.scene || !this.glowTexture || stars.length < 6 || maxWeight <= minWeight) return;
+		if (!this.scene || !this.starTexture || stars.length < 6 || maxWeight <= minWeight) return;
 		let top = stars[0];
 		for (const star of stars) if (star.weight > top.weight) top = star;
 
 		const haloMaterial = new THREE.SpriteMaterial({
-			map: this.glowTexture,
+			map: this.starTexture,
 			color: 0xdff1ff,
 			transparent: true,
 			opacity: 0.85,
@@ -782,6 +892,7 @@ export class ConstellationsView extends ItemView {
 					uPerpV: { value: perpV },
 					uSize: { value: 3 },
 					uScale: { value: this.pointScale },
+					uMaxSize: { value: 30 },
 					uMap: { value: this.glowTexture },
 					uColor: { value: jetColor },
 				},
@@ -892,12 +1003,36 @@ export class ConstellationsView extends ItemView {
 
 	private updateLabelVisibility(): void {
 		if (!this.camera) return;
-		for (const { item, obj } of this.starLabels) {
-			obj.visible = this.camera.position.distanceTo(item.position) < STAR_LABEL_DISTANCE;
+		const camPos = this.camera.position;
+
+		if (this.searchActive) {
+			// While searching, names are the point — show every match's label
+			// regardless of distance, hide the rest outright.
+			for (const { item, obj } of this.starLabels) {
+				obj.visible = this.searchMatches.has(item.id);
+			}
+		} else {
+			// Only the nearest handful of star names show at once — inside a
+			// dense cluster, showing every star within range piles hundreds of
+			// labels on top of each other into unreadable text soup.
+			const near: { obj: CSS2DObject; dist: number }[] = [];
+			for (const { item, obj } of this.starLabels) {
+				const dist = camPos.distanceTo(item.position);
+				if (dist < STAR_LABEL_DISTANCE) {
+					near.push({ obj, dist });
+				} else {
+					obj.visible = false;
+				}
+			}
+			near.sort((a, b) => a.dist - b.dist);
+			near.forEach(({ obj }, i) => {
+				obj.visible = i < MAX_VISIBLE_STAR_LABELS;
+			});
 		}
+
 		for (const { item, obj } of this.tagLabels) {
 			const anchor = item.alphaStar?.position ?? item.center;
-			obj.visible = this.camera.position.distanceTo(anchor) < TAG_LABEL_DISTANCE;
+			obj.visible = camPos.distanceTo(anchor) < TAG_LABEL_DISTANCE;
 		}
 	}
 
@@ -965,9 +1100,57 @@ export class ConstellationsView extends ItemView {
 		const dir = this.camera.position.clone().sub(this.controls.target);
 		if (dir.lengthSq() < 1e-6) dir.set(0, 0, 1);
 		dir.normalize();
-		const distance = universe.radius * 2.6 + 10;
+		// Close enough to already be "inside" the universe on arrival — a wide
+		// establishing shot just means more manual zooming afterward.
+		const distance = universe.radius * 1.5 + 6;
 		const toPos = universe.center.clone().add(dir.multiplyScalar(distance));
 		this.flyCameraTo(toPos, universe.center.clone());
+	}
+
+	/** Filters stars by name/tag substring match: matching stars stay at full
+	 * brightness, everything else dims to near-invisible via the `aDim`
+	 * vertex attribute — no geometry rebuild, just mutating the existing
+	 * buffers, so it stays smooth while typing. */
+	private applySearch(rawQuery: string): void {
+		this.searchQuery = rawQuery;
+		const query = rawQuery.trim().toLowerCase();
+		this.searchActive = query.length > 0;
+		this.searchMatches.clear();
+
+		for (const star of this.stars) {
+			const matches =
+				!this.searchActive ||
+				star.name.toLowerCase().includes(query) ||
+				star.tags.some((t) => t.toLowerCase().includes(query));
+			if (matches) this.searchMatches.add(star.id);
+
+			const loc = this.starIndex.get(star.id);
+			if (!loc) continue;
+			const geometry = this.starLayers[loc.layer]?.geometry;
+			const attr = geometry?.getAttribute("aDim") as THREE.BufferAttribute | undefined;
+			attr?.setX(loc.vertexIndex, matches ? 1 : 0.08);
+		}
+		for (const layer of this.starLayers) {
+			const attr = layer.geometry.getAttribute("aDim") as THREE.BufferAttribute | undefined;
+			if (attr) attr.needsUpdate = true;
+		}
+	}
+
+	private flyToFirstMatch(): void {
+		if (!this.camera || this.searchMatches.size === 0) return;
+		let best: StarNode | null = null;
+		let bestDist = Infinity;
+		for (const star of this.stars) {
+			if (!this.searchMatches.has(star.id)) continue;
+			const dist = this.camera.position.distanceTo(star.position);
+			if (dist < bestDist) {
+				bestDist = dist;
+				best = star;
+			}
+		}
+		if (!best) return;
+		this.flyTo(best.position);
+		void this.showInfoPanel(best);
 	}
 
 	private flyCameraTo(toPos: THREE.Vector3, toTarget: THREE.Vector3): void {
@@ -1049,9 +1232,9 @@ export class ConstellationsView extends ItemView {
 		position: THREE.Vector3,
 		opts: { size: number; color: number; duration: number }
 	): void {
-		if (!this.scene || !this.glowTexture) return;
+		if (!this.scene || !this.starTexture) return;
 		const material = new THREE.SpriteMaterial({
-			map: this.glowTexture,
+			map: this.starTexture,
 			color: opts.color,
 			transparent: true,
 			opacity: 1,

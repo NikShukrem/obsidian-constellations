@@ -44,6 +44,28 @@
 	border-color: rgba(191, 224, 255, 0.6);
 }
 
+.ct-search-input {
+	background: rgba(10, 10, 20, 0.75);
+	border: 1px solid rgba(138, 180, 255, 0.35);
+	color: #e8e6f5;
+	padding: 6px 12px;
+	border-radius: 6px;
+	font-size: 12.5px;
+	backdrop-filter: blur(4px);
+	width: 200px;
+	outline: none;
+}
+
+.ct-search-input::placeholder {
+	color: #8f8fa8;
+}
+
+.ct-search-input:focus {
+	background: rgba(20, 20, 36, 0.92);
+	border-color: rgba(191, 224, 255, 0.7);
+	box-shadow: 0 0 0 2px rgba(191, 224, 255, 0.15);
+}
+
 .ct-dropdown {
 	position: relative;
 }
