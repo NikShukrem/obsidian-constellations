@@ -9,18 +9,18 @@ export default class ConstellationsPlugin extends Plugin {
 		);
 
 		this.addRibbonIcon("sparkles", "Open Constellations", () => {
-			this.activateView();
+			void this.activateView();
 		});
 
 		this.addCommand({
-			id: "open-constellations-view",
-			name: "Open Constellations view",
-			callback: () => this.activateView(),
+			id: "open-view",
+			name: "Open view",
+			callback: () => void this.activateView(),
 		});
 
 		this.addCommand({
-			id: "recenter-constellations-view",
-			name: "Recenter Constellations camera",
+			id: "recenter-camera",
+			name: "Recenter camera",
 			checkCallback: (checking) => {
 				const leaves = this.app.workspace.getLeavesOfType(
 					VIEW_TYPE_CONSTELLATIONS
@@ -37,8 +37,8 @@ export default class ConstellationsPlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: "rebuild-constellations-view",
-			name: "Rebuild Constellations view",
+			id: "rebuild-view",
+			name: "Rebuild view",
 			checkCallback: (checking) => {
 				const leaves = this.app.workspace.getLeavesOfType(
 					VIEW_TYPE_CONSTELLATIONS
@@ -71,6 +71,6 @@ export default class ConstellationsPlugin extends Plugin {
 			await leaf.setViewState({ type: VIEW_TYPE_CONSTELLATIONS, active: true });
 		}
 
-		workspace.revealLeaf(leaf);
+		void workspace.revealLeaf(leaf);
 	}
 }

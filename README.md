@@ -9,7 +9,7 @@ universes. Fly through your vault instead of staring at a flat force graph.
 
 [![License: MIT](https://img.shields.io/github/license/NikShukrem/obsidian-constellations?color=8ab4ff)](LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/NikShukrem/obsidian-constellations?color=8ab4ff&sort=semver)](https://github.com/NikShukrem/obsidian-constellations/releases)
-[![Minimum Obsidian version](https://img.shields.io/badge/Obsidian-%E2%89%A50.15.0-8ab4ff)](https://obsidian.md)
+[![Minimum Obsidian version](https://img.shields.io/badge/Obsidian-%E2%89%A51.0.0-8ab4ff)](https://obsidian.md)
 
 ![Constellations overview — a universe's core with comets drifting past](media/hero.gif)
 
@@ -72,9 +72,9 @@ npm run build  # production build
 
 Symlink (or copy) the project folder into
 `<vault>/.obsidian/plugins/constellations/` so Obsidian picks up rebuilds.
-The **Rebuild Constellations view** command (command palette) forces the 3D
-scene to re-read the vault if notes changed while the panel was already
-open; **Recenter Constellations camera** snaps back to the default view.
+The **Rebuild view** command (command palette) forces the 3D scene to
+re-read the vault if notes changed while the panel was already open;
+**Recenter camera** snaps back to the default view.
 
 ## How it's built
 
@@ -104,16 +104,23 @@ Not implemented yet, just on the shortlist:
 
 This repo is set up to submit to Obsidian's official Community Plugins list:
 
-- `manifest.json` has a unique `id`, `author`, `authorUrl`.
+- `manifest.json` has a unique `id`, `author`, `authorUrl`, and a
+  `minAppVersion` that actually covers every Obsidian API used (checked via
+  the automated review at submission time — see below).
 - `versions.json` maps plugin versions to the minimum Obsidian version.
 - `npm version patch|minor|major` bumps `manifest.json`/`versions.json`
   together (see `version-bump.mjs`).
 - Pushing a tag (matching the version in `manifest.json`, no `v` prefix)
-  triggers `.github/workflows/release.yml`, which builds and attaches
-  `main.js`, `manifest.json`, and `styles.css` to a GitHub Release.
-- To submit: fork
-  [obsidianmd/obsidian-releases](https://github.com/obsidianmd/obsidian-releases),
-  add an entry to `community-plugins.json`, and open a PR.
+  triggers `.github/workflows/release.yml`, which builds, attests build
+  provenance for the release assets, and attaches `main.js`,
+  `manifest.json`, and `styles.css` to a GitHub Release.
+- `npx eslint src/*.ts main.ts` checks for unnecessary type assertions and
+  floating promises — both of which the official review flags.
+- To submit: sign in at [community.obsidian.md](https://community.obsidian.md)
+  with an Obsidian account, link your GitHub account, then Plugins → New
+  plugin → enter the repo URL. (`obsidianmd/obsidian-releases` no longer
+  accepts direct PRs to `community-plugins.json` — submissions go through
+  this portal instead, which runs an automated review before human review.)
 
 ## License
 

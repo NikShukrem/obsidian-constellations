@@ -297,7 +297,7 @@ export class ConstellationsView extends ItemView {
 			if (this.galaxyMenuOpen) dropdownMenu.show();
 			else dropdownMenu.hide();
 		};
-		document.addEventListener("click", this.onDocumentClick);
+		activeDocument.addEventListener("click", this.onDocumentClick);
 
 		const searchInput = toolbar.createEl("input", {
 			cls: "ct-search-input",
@@ -306,8 +306,8 @@ export class ConstellationsView extends ItemView {
 		});
 		searchInput.addEventListener("input", () => {
 			const value = searchInput.value;
-			if (this.searchDebounce !== null) window.clearTimeout(this.searchDebounce);
-			this.searchDebounce = window.setTimeout(() => {
+			if (this.searchDebounce !== null) activeWindow.clearTimeout(this.searchDebounce);
+			this.searchDebounce = activeWindow.setTimeout(() => {
 				this.searchDebounce = null;
 				this.applySearch(value);
 			}, 120);
@@ -346,12 +346,12 @@ export class ConstellationsView extends ItemView {
 	}
 
 	async onClose(): Promise<void> {
-		if (this.animationHandle) cancelAnimationFrame(this.animationHandle);
-		if (this.idleTimer !== null) window.clearTimeout(this.idleTimer);
-		if (this.rebuildTimer !== null) window.clearTimeout(this.rebuildTimer);
-		if (this.searchDebounce !== null) window.clearTimeout(this.searchDebounce);
-		for (const timer of this.changeDebounceTimers.values()) window.clearTimeout(timer);
-		document.removeEventListener("click", this.onDocumentClick);
+		if (this.animationHandle) activeWindow.cancelAnimationFrame(this.animationHandle);
+		if (this.idleTimer !== null) activeWindow.clearTimeout(this.idleTimer);
+		if (this.rebuildTimer !== null) activeWindow.clearTimeout(this.rebuildTimer);
+		if (this.searchDebounce !== null) activeWindow.clearTimeout(this.searchDebounce);
+		for (const timer of this.changeDebounceTimers.values()) activeWindow.clearTimeout(timer);
+		activeDocument.removeEventListener("click", this.onDocumentClick);
 		this.resizeObserver?.disconnect();
 		this.controls?.dispose();
 		this.renderer?.dispose();
@@ -391,7 +391,7 @@ export class ConstellationsView extends ItemView {
 		camera.position.copy(DEFAULT_CAMERA_POS);
 
 		const renderer = new THREE.WebGLRenderer({ antialias: true });
-		renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+		renderer.setPixelRatio(Math.min(activeWindow.devicePixelRatio, 2));
 		renderer.setSize(width, height);
 		mount.appendChild(renderer.domElement);
 
@@ -445,7 +445,7 @@ export class ConstellationsView extends ItemView {
 
 	private createGlowTexture(): THREE.Texture {
 		const size = 128;
-		const canvas = document.createElement("canvas");
+		const canvas = activeDocument.createElement("canvas");
 		canvas.width = size;
 		canvas.height = size;
 		const ctx = canvas.getContext("2d");
@@ -472,7 +472,7 @@ export class ConstellationsView extends ItemView {
 	 * so the per-star hue tint from the shader still comes through. */
 	private createSparkleTexture(): THREE.Texture {
 		const size = 256;
-		const canvas = document.createElement("canvas");
+		const canvas = activeDocument.createElement("canvas");
 		canvas.width = size;
 		canvas.height = size;
 		const ctx = canvas.getContext("2d");
@@ -647,7 +647,7 @@ export class ConstellationsView extends ItemView {
 			const fadeIn = Math.min(1, t / 0.06);
 			const fadeOut = Math.min(1, (1 - t) / 0.06);
 			const opacity = Math.min(fadeIn, fadeOut);
-			(comet.head.material as THREE.SpriteMaterial).opacity = 0.95 * opacity;
+			comet.head.material.opacity = 0.95 * opacity;
 			(comet.trail.material as THREE.LineBasicMaterial).opacity = 0.7 * opacity;
 		}
 	}
@@ -788,7 +788,7 @@ export class ConstellationsView extends ItemView {
 			const nearR = nebula.radius * 1.4;
 			const farR = nebula.radius * 4.5;
 			const factor = THREE.MathUtils.clamp((distance - nearR) / (farR - nearR), 0, 1);
-			(nebula.sprite.material as THREE.SpriteMaterial).opacity = nebula.baseOpacity * factor;
+			nebula.sprite.material.opacity = nebula.baseOpacity * factor;
 		}
 	}
 
@@ -1018,7 +1018,7 @@ export class ConstellationsView extends ItemView {
 		if (!this.scene) return;
 		for (const universe of universes) {
 			const anchor = universe.alphaStar?.position ?? universe.center;
-			const el = document.createElement("div");
+			const el = activeDocument.createElement("div");
 			el.className = "constellations-label constellations-label-universe";
 			el.textContent = universe.name;
 			el.title = `Перейти к вселенной «${universe.name}»`;
@@ -1034,7 +1034,7 @@ export class ConstellationsView extends ItemView {
 			for (const group of universe.constellations) {
 				if (!group.alphaStar) continue;
 				const tagAnchor = group.alphaStar.position;
-				const tagEl = document.createElement("div");
+				const tagEl = activeDocument.createElement("div");
 				tagEl.className = "constellations-label constellations-label-tag";
 				tagEl.textContent = `#${group.tag}`;
 				tagEl.style.color = `hsl(${group.hue}, 78%, 74%)`;
@@ -1047,7 +1047,7 @@ export class ConstellationsView extends ItemView {
 			}
 
 			for (const star of universe.stars) {
-				const nameEl = document.createElement("div");
+				const nameEl = activeDocument.createElement("div");
 				nameEl.className = "constellations-label constellations-label-star";
 				nameEl.textContent = star.name;
 				const nameLabel = new CSS2DObject(nameEl);
@@ -1242,7 +1242,7 @@ export class ConstellationsView extends ItemView {
 		title.href = "#";
 		title.onclick = (e) => {
 			e.preventDefault();
-			this.plugin.app.workspace.getLeaf(false).openFile(star.file);
+			void this.plugin.app.workspace.getLeaf(false).openFile(star.file);
 		};
 		const closeBtn = header.createEl("button", { cls: "ci-close", text: "×" });
 		closeBtn.onclick = () => panel.hide();
@@ -1330,7 +1330,7 @@ export class ConstellationsView extends ItemView {
 			}
 			const eased = 1 - Math.pow(1 - t, 3);
 			flash.sprite.scale.setScalar(0.6 + eased * flash.maxScale);
-			(flash.sprite.material as THREE.SpriteMaterial).opacity = 1 - t;
+			flash.sprite.material.opacity = 1 - t;
 		}
 	}
 
@@ -1339,9 +1339,9 @@ export class ConstellationsView extends ItemView {
 	 * wasn't there before — usually just the one that was just created. */
 	private handleFileCreated(file: TAbstractFile): void {
 		if (!(file instanceof TFile) || file.extension !== "md") return;
-		if (this.rebuildTimer !== null) window.clearTimeout(this.rebuildTimer);
+		if (this.rebuildTimer !== null) activeWindow.clearTimeout(this.rebuildTimer);
 		const prevIds = new Set(this.stars.map((s) => s.id));
-		this.rebuildTimer = window.setTimeout(() => {
+		this.rebuildTimer = activeWindow.setTimeout(() => {
 			this.rebuildTimer = null;
 			this.rebuild();
 			for (const star of this.stars) {
@@ -1359,8 +1359,8 @@ export class ConstellationsView extends ItemView {
 		if (!(file instanceof TFile) || file.extension !== "md") return;
 		const path = file.path;
 		const existing = this.changeDebounceTimers.get(path);
-		if (existing !== undefined) window.clearTimeout(existing);
-		const timer = window.setTimeout(() => {
+		if (existing !== undefined) activeWindow.clearTimeout(existing);
+		const timer = activeWindow.setTimeout(() => {
 			this.changeDebounceTimers.delete(path);
 			this.evaluateGrowth(file);
 		}, 900);
@@ -1382,21 +1382,21 @@ export class ConstellationsView extends ItemView {
 
 	private scheduleIdleAutoRotate(): void {
 		this.clearIdleTimer();
-		this.idleTimer = window.setTimeout(() => {
+		this.idleTimer = activeWindow.setTimeout(() => {
 			if (this.controls) this.controls.autoRotate = true;
 		}, IDLE_ROTATE_DELAY);
 	}
 
 	private clearIdleTimer(): void {
 		if (this.idleTimer !== null) {
-			window.clearTimeout(this.idleTimer);
+			activeWindow.clearTimeout(this.idleTimer);
 			this.idleTimer = null;
 		}
 		if (this.controls) this.controls.autoRotate = false;
 	}
 
 	private animate = (now?: number): void => {
-		this.animationHandle = requestAnimationFrame(this.animate);
+		this.animationHandle = activeWindow.requestAnimationFrame(this.animate);
 		const time = now ?? performance.now();
 
 		if (this.flight && this.camera && this.controls) {
@@ -1419,7 +1419,7 @@ export class ConstellationsView extends ItemView {
 		if (this.quasarHalo) {
 			const pulse = 0.85 + 0.15 * Math.sin((time / 1000) * 1.2);
 			this.quasarHalo.scale.setScalar(this.quasarBaseScale * pulse);
-			(this.quasarHalo.material as THREE.SpriteMaterial).opacity = 0.75 * pulse + 0.1;
+			this.quasarHalo.material.opacity = 0.75 * pulse + 0.1;
 		}
 
 		this.controls?.update();
