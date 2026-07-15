@@ -1,8 +1,8 @@
 {
 	"id": "constellations",
 	"name": "Constellations",
-	"version": "0.1.1",
-	"minAppVersion": "1.0.0",
+	"version": "0.1.2",
+	"minAppVersion": "1.7.2",
 	"description": "A 3D star map alternative to Graph View: notes are stars, shared tags form constellations, top-level folders form universes.",
 	"author": "NikShukrem",
 	"authorUrl": "https://github.com/NikShukrem",

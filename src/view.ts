@@ -306,8 +306,8 @@ export class ConstellationsView extends ItemView {
 		});
 		searchInput.addEventListener("input", () => {
 			const value = searchInput.value;
-			if (this.searchDebounce !== null) activeWindow.clearTimeout(this.searchDebounce);
-			this.searchDebounce = activeWindow.setTimeout(() => {
+			if (this.searchDebounce !== null) window.clearTimeout(this.searchDebounce);
+			this.searchDebounce = window.setTimeout(() => {
 				this.searchDebounce = null;
 				this.applySearch(value);
 			}, 120);
@@ -346,11 +346,11 @@ export class ConstellationsView extends ItemView {
 	}
 
 	async onClose(): Promise<void> {
-		if (this.animationHandle) activeWindow.cancelAnimationFrame(this.animationHandle);
-		if (this.idleTimer !== null) activeWindow.clearTimeout(this.idleTimer);
-		if (this.rebuildTimer !== null) activeWindow.clearTimeout(this.rebuildTimer);
-		if (this.searchDebounce !== null) activeWindow.clearTimeout(this.searchDebounce);
-		for (const timer of this.changeDebounceTimers.values()) activeWindow.clearTimeout(timer);
+		if (this.animationHandle) window.cancelAnimationFrame(this.animationHandle);
+		if (this.idleTimer !== null) window.clearTimeout(this.idleTimer);
+		if (this.rebuildTimer !== null) window.clearTimeout(this.rebuildTimer);
+		if (this.searchDebounce !== null) window.clearTimeout(this.searchDebounce);
+		for (const timer of this.changeDebounceTimers.values()) window.clearTimeout(timer);
 		activeDocument.removeEventListener("click", this.onDocumentClick);
 		this.resizeObserver?.disconnect();
 		this.controls?.dispose();
@@ -1339,9 +1339,9 @@ export class ConstellationsView extends ItemView {
 	 * wasn't there before — usually just the one that was just created. */
 	private handleFileCreated(file: TAbstractFile): void {
 		if (!(file instanceof TFile) || file.extension !== "md") return;
-		if (this.rebuildTimer !== null) activeWindow.clearTimeout(this.rebuildTimer);
+		if (this.rebuildTimer !== null) window.clearTimeout(this.rebuildTimer);
 		const prevIds = new Set(this.stars.map((s) => s.id));
-		this.rebuildTimer = activeWindow.setTimeout(() => {
+		this.rebuildTimer = window.setTimeout(() => {
 			this.rebuildTimer = null;
 			this.rebuild();
 			for (const star of this.stars) {
@@ -1359,8 +1359,8 @@ export class ConstellationsView extends ItemView {
 		if (!(file instanceof TFile) || file.extension !== "md") return;
 		const path = file.path;
 		const existing = this.changeDebounceTimers.get(path);
-		if (existing !== undefined) activeWindow.clearTimeout(existing);
-		const timer = activeWindow.setTimeout(() => {
+		if (existing !== undefined) window.clearTimeout(existing);
+		const timer = window.setTimeout(() => {
 			this.changeDebounceTimers.delete(path);
 			this.evaluateGrowth(file);
 		}, 900);
@@ -1382,21 +1382,21 @@ export class ConstellationsView extends ItemView {
 
 	private scheduleIdleAutoRotate(): void {
 		this.clearIdleTimer();
-		this.idleTimer = activeWindow.setTimeout(() => {
+		this.idleTimer = window.setTimeout(() => {
 			if (this.controls) this.controls.autoRotate = true;
 		}, IDLE_ROTATE_DELAY);
 	}
 
 	private clearIdleTimer(): void {
 		if (this.idleTimer !== null) {
-			activeWindow.clearTimeout(this.idleTimer);
+			window.clearTimeout(this.idleTimer);
 			this.idleTimer = null;
 		}
 		if (this.controls) this.controls.autoRotate = false;
 	}
 
 	private animate = (now?: number): void => {
-		this.animationHandle = activeWindow.requestAnimationFrame(this.animate);
+		this.animationHandle = window.requestAnimationFrame(this.animate);
 		const time = now ?? performance.now();
 
 		if (this.flight && this.camera && this.controls) {
