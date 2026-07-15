@@ -11,6 +11,8 @@ universes. Fly through your vault instead of staring at a flat force graph.
 [![Latest release](https://img.shields.io/github/v/release/NikShukrem/obsidian-constellations?color=8ab4ff&sort=semver)](https://github.com/NikShukrem/obsidian-constellations/releases)
 [![Minimum Obsidian version](https://img.shields.io/badge/Obsidian-%E2%89%A50.15.0-8ab4ff)](https://obsidian.md)
 
+![Constellations overview — a universe's core with comets drifting past](media/hero.gif)
+
 </div>
 
 ---
@@ -41,6 +43,8 @@ it reads as a sky, not a diagram.
   stay lit, everything else dims down; `Enter` flies to the nearest match.
 - **Alive by default** — twinkling stars, bloom, comets drifting through the
   background, idle auto-rotate, all with no configuration required.
+
+![A dense universe up close — constellation lines, a comet trail, sparkle stars](media/dense-cluster.gif)
 
 ## Installing
 

@@ -111,6 +111,43 @@ const JET_FRAGMENT_SHADER = /* glsl */ `
 	}
 `;
 
+// Constellation lines: a bright point runs along each constellation's path
+// (aProgress = normalized distance along that constellation, aPhase = a
+// per-constellation offset so they don't all pulse in sync) leaving a
+// fading comet-tail behind it. The base line never drops below a floor so
+// the constellation shape stays readable between passes.
+const LINE_VERTEX_SHADER = /* glsl */ `
+	attribute vec3 color;
+	attribute float aProgress;
+	attribute float aPhase;
+	varying vec3 vColor;
+	varying float vProgress;
+	varying float vPhase;
+
+	void main() {
+		vColor = color;
+		vProgress = aProgress;
+		vPhase = aPhase;
+		gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+	}
+`;
+
+const LINE_FRAGMENT_SHADER = /* glsl */ `
+	uniform float uTime;
+	uniform float uSpeed;
+	varying vec3 vColor;
+	varying float vProgress;
+	varying float vPhase;
+
+	void main() {
+		float t = fract(uTime * uSpeed + vPhase);
+		float trailDist = fract(t - vProgress);
+		float glow = exp(-trailDist * trailDist * 45.0);
+		float alpha = 0.22 + glow * 1.6;
+		gl_FragColor = vec4(vColor * alpha, alpha);
+	}
+`;
+
 interface CSS2DEntry<T> {
 	item: T;
 	obj: CSS2DObject;
@@ -171,6 +208,7 @@ export class ConstellationsView extends ItemView {
 	private starTexture: THREE.Texture | null = null;
 	private starLayers: THREE.Points[] = [];
 	private starMaterials: THREE.ShaderMaterial[] = [];
+	private lineMaterial: THREE.ShaderMaterial | null = null;
 	private starsByLayer: StarNode[][] = [];
 	private starIndex = new Map<string, { layer: number; vertexIndex: number }>();
 	private searchQuery = "";
@@ -645,6 +683,7 @@ export class ConstellationsView extends ItemView {
 		this.quasarJetMaterials = [];
 		this.activeFlashes = [];
 		this.nebulae = [];
+		this.lineMaterial = null;
 	}
 
 	private populateScene(universes: UniverseGroup[]): void {
@@ -914,11 +953,24 @@ export class ConstellationsView extends ItemView {
 		if (!this.scene) return;
 		const positions: number[] = [];
 		const colors: number[] = [];
+		const progress: number[] = [];
+		const phases: number[] = [];
 		const lineColor = new THREE.Color();
+
 		for (const universe of universes) {
 			for (const group of universe.constellations) {
 				if (group.ringStars.length < 2) continue;
 				lineColor.setHSL(group.hue / 360, 0.7, 0.65);
+				const groupPhase = Math.random();
+
+				const cumulative = [0];
+				for (let i = 1; i < group.ringStars.length; i++) {
+					cumulative.push(
+						cumulative[i - 1] + group.ringStars[i - 1].position.distanceTo(group.ringStars[i].position)
+					);
+				}
+				const totalLength = cumulative[cumulative.length - 1] || 1;
+
 				for (let i = 0; i < group.ringStars.length - 1; i++) {
 					const a = group.ringStars[i].position;
 					const b = group.ringStars[i + 1].position;
@@ -931,6 +983,8 @@ export class ConstellationsView extends ItemView {
 						lineColor.g,
 						lineColor.b
 					);
+					progress.push(cumulative[i] / totalLength, cumulative[i + 1] / totalLength);
+					phases.push(groupPhase, groupPhase);
 				}
 			}
 		}
@@ -941,14 +995,23 @@ export class ConstellationsView extends ItemView {
 			new THREE.Float32BufferAttribute(positions, 3)
 		);
 		geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
-		const material = new THREE.LineBasicMaterial({
-			vertexColors: true,
+		geometry.setAttribute("aProgress", new THREE.Float32BufferAttribute(progress, 1));
+		geometry.setAttribute("aPhase", new THREE.Float32BufferAttribute(phases, 1));
+		const material = new THREE.ShaderMaterial({
+			uniforms: {
+				uTime: { value: 0 },
+				uSpeed: { value: 0.055 },
+			},
+			vertexShader: LINE_VERTEX_SHADER,
+			fragmentShader: LINE_FRAGMENT_SHADER,
 			transparent: true,
-			opacity: 0.55,
+			depthWrite: false,
+			blending: THREE.AdditiveBlending,
 		});
 		const lines = new THREE.LineSegments(geometry, material);
 		lines.userData.isGalaxyContent = true;
 		this.scene.add(lines);
+		this.lineMaterial = material;
 	}
 
 	private addLabels(universes: UniverseGroup[]): void {
@@ -1349,6 +1412,7 @@ export class ConstellationsView extends ItemView {
 
 		for (const material of this.starMaterials) material.uniforms.uTime.value = time / 1000;
 		for (const material of this.quasarJetMaterials) material.uniforms.uTime.value = time / 1000;
+		if (this.lineMaterial) this.lineMaterial.uniforms.uTime.value = time / 1000;
 		this.updateComets(time);
 		this.updateFlashes(time);
 

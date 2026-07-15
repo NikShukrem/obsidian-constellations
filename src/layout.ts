@@ -38,6 +38,18 @@ function jitterPolar(
 	};
 }
 
+/** A random orthonormal (u, v) basis spanning some plane through the origin.
+ * Giving each constellation its own basis instead of always the world XZ
+ * plane is what makes different constellations look tilted against each
+ * other in 3D instead of every ring sitting flat on the same "floor". */
+function randomPlaneBasis(): { u: THREE.Vector3; v: THREE.Vector3; normal: THREE.Vector3 } {
+	const normal = randomOnSphereDirection();
+	const arbitrary = Math.abs(normal.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
+	const u = new THREE.Vector3().crossVectors(normal, arbitrary).normalize();
+	const v = new THREE.Vector3().crossVectors(normal, u).normalize();
+	return { u, v, normal };
+}
+
 function chooseArmCount(groupCount: number): number {
 	if (groupCount >= 16) return 4;
 	if (groupCount >= 9) return 3;
@@ -176,6 +188,10 @@ export function layoutGalaxy(universes: UniverseGroup[]): void {
 			const weights = stars.map((s) => s.weight);
 			const minW = Math.min(...weights);
 			const maxW = Math.max(...weights);
+			// Each constellation gets its own tilted plane instead of everyone
+			// sitting flat on the world XZ plane — real constellations don't
+			// all share one orientation either.
+			const { u, v, normal } = randomPlaneBasis();
 			stars.forEach((star, si) => {
 				const angle = (si / stars.length) * Math.PI * 2 + (Math.random() - 0.5) * 0.5;
 				// Heavier stars (more links/backlinks/tags) are gravitationally
@@ -183,11 +199,13 @@ export function layoutGalaxy(universes: UniverseGroup[]): void {
 				const pull = normalizedWeight(star, minW, maxW);
 				const radius = ringRadius * (0.3 + 0.7 * (1 - pull));
 				const jitter = (Math.random() - 0.5) * ringRadius * 0.25;
-				star.position.set(
-					group.center.x + Math.cos(angle) * (radius + jitter),
-					group.center.y + (Math.random() - 0.5) * ringRadius * 0.45,
-					group.center.z + Math.sin(angle) * (radius + jitter)
-				);
+				const inPlane = radius + jitter;
+				const outOfPlane = (Math.random() - 0.5) * ringRadius * 0.12;
+				star.position
+					.copy(group.center)
+					.addScaledVector(u, Math.cos(angle) * inPlane)
+					.addScaledVector(v, Math.sin(angle) * inPlane)
+					.addScaledVector(normal, outOfPlane);
 				star.hue = group.hue;
 				placed.add(star.id);
 			});
