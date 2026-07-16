@@ -1,8 +1,98 @@
 import * as THREE from "three";
+import { hashHue } from "./graphBuilder";
 import type { StarNode, UniverseGroup } from "./types";
 
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 const SPIRAL_ARM_MIN_GROUPS = 5;
+
+type ConstellationShape = "ring" | "arc" | "zigzag" | "cluster" | "spiral";
+const CONSTELLATION_SHAPES: ConstellationShape[] = ["ring", "arc", "zigzag", "cluster", "spiral"];
+
+/** Deterministic (stable across rebuilds) shape pick per constellation, so
+ * they stop all reading as the same circle at different sizes. */
+function pickShape(seed: string): ConstellationShape {
+	return CONSTELLATION_SHAPES[hashHue(seed) % CONSTELLATION_SHAPES.length];
+}
+
+/** Local 2D layout for a constellation's stars, in the order they'll be
+ * chain-connected. `pulls` (0-1 per star) still pulls heavier stars toward
+ * the center on the shapes where "center" is a meaningful concept. */
+function shapePositions(
+	shape: ConstellationShape,
+	count: number,
+	ringRadius: number,
+	pulls: number[]
+): { x: number; y: number }[] {
+	const points: { x: number; y: number }[] = [];
+
+	switch (shape) {
+		case "zigzag": {
+			// A wandering path with sharp random turns — closer to how real
+			// asterisms (Orion's belt, the Big Dipper) actually read than a
+			// tidy circle does.
+			let angle = Math.random() * Math.PI * 2;
+			let x = 0;
+			let y = 0;
+			points.push({ x, y });
+			for (let i = 1; i < count; i++) {
+				angle += (Math.random() - 0.5) * 2.3;
+				const step = ringRadius * (0.55 + Math.random() * 0.45);
+				x += Math.cos(angle) * step;
+				y += Math.sin(angle) * step;
+				points.push({ x, y });
+			}
+			const cx = points.reduce((s, p) => s + p.x, 0) / points.length;
+			const cy = points.reduce((s, p) => s + p.y, 0) / points.length;
+			for (const p of points) {
+				p.x -= cx;
+				p.y -= cy;
+			}
+			break;
+		}
+		case "cluster": {
+			// A loose, un-ordered scatter rather than a geometric outline —
+			// still denser toward the middle for heavier stars.
+			for (let i = 0; i < count; i++) {
+				const dist = ringRadius * (0.25 + 0.85 * (1 - pulls[i])) * Math.sqrt(Math.random());
+				const angle = Math.random() * Math.PI * 2;
+				points.push({ x: Math.cos(angle) * dist, y: Math.sin(angle) * dist });
+			}
+			break;
+		}
+		case "spiral": {
+			for (let i = 0; i < count; i++) {
+				const angle = i * GOLDEN_ANGLE;
+				const radius = ringRadius * 0.34 * Math.sqrt(i + 0.5);
+				points.push({ x: Math.cos(angle) * radius, y: Math.sin(angle) * radius });
+			}
+			break;
+		}
+		case "arc": {
+			// An open arc instead of a closed loop — random sweep between a
+			// quarter and three-quarters of a full circle.
+			const span = Math.PI * (0.6 + Math.random() * 0.9);
+			const start = Math.random() * Math.PI * 2;
+			for (let i = 0; i < count; i++) {
+				const t = count <= 1 ? 0 : i / (count - 1);
+				const angle = start + t * span;
+				const radius = ringRadius * (0.3 + 0.7 * (1 - pulls[i]));
+				points.push({ x: Math.cos(angle) * radius, y: Math.sin(angle) * radius });
+			}
+			break;
+		}
+		case "ring":
+		default: {
+			for (let i = 0; i < count; i++) {
+				const angle = (i / count) * Math.PI * 2;
+				const radius = ringRadius * (0.3 + 0.7 * (1 - pulls[i]));
+				points.push({ x: Math.cos(angle) * radius, y: Math.sin(angle) * radius });
+			}
+			break;
+		}
+	}
+
+	return points;
+}
 
 function randomOnSphereDirection(): THREE.Vector3 {
 	const u = Math.random();
@@ -188,23 +278,24 @@ export function layoutGalaxy(universes: UniverseGroup[]): void {
 			const weights = stars.map((s) => s.weight);
 			const minW = Math.min(...weights);
 			const maxW = Math.max(...weights);
+			const pulls = stars.map((s) => normalizedWeight(s, minW, maxW));
 			// Each constellation gets its own tilted plane instead of everyone
 			// sitting flat on the world XZ plane — real constellations don't
 			// all share one orientation either.
 			const { u, v, normal } = randomPlaneBasis();
+			// ...and its own outline instead of everyone being a same-shaped
+			// circle at a different size.
+			const shape = pickShape(group.key);
+			const positions2d = shapePositions(shape, stars.length, ringRadius, pulls);
 			stars.forEach((star, si) => {
-				const angle = (si / stars.length) * Math.PI * 2 + (Math.random() - 0.5) * 0.5;
-				// Heavier stars (more links/backlinks/tags) are gravitationally
-				// pulled toward the constellation's center; light stars drift outward.
-				const pull = normalizedWeight(star, minW, maxW);
-				const radius = ringRadius * (0.3 + 0.7 * (1 - pull));
-				const jitter = (Math.random() - 0.5) * ringRadius * 0.25;
-				const inPlane = radius + jitter;
+				const { x, y } = positions2d[si];
+				const jitterX = (Math.random() - 0.5) * ringRadius * 0.12;
+				const jitterY = (Math.random() - 0.5) * ringRadius * 0.12;
 				const outOfPlane = (Math.random() - 0.5) * ringRadius * 0.12;
 				star.position
 					.copy(group.center)
-					.addScaledVector(u, Math.cos(angle) * inPlane)
-					.addScaledVector(v, Math.sin(angle) * inPlane)
+					.addScaledVector(u, x + jitterX)
+					.addScaledVector(v, y + jitterY)
 					.addScaledVector(normal, outOfPlane);
 				star.hue = group.hue;
 				placed.add(star.id);
