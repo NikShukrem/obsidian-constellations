@@ -1,6 +1,8 @@
 import { App, getAllTags, TFile } from "obsidian";
 import * as THREE from "three";
-import type { ConstellationGroup, StarNode, UniverseGroup } from "./types";
+import type { ConnectionStyle, ConstellationGroup, StarNode, UniverseGroup } from "./types";
+
+const CONNECTION_STYLES: ConnectionStyle[] = ["filament", "stream", "nebula"];
 
 const ROOT_UNIVERSE_NAME = "Root";
 export const DUST_HUE = 225;
@@ -70,6 +72,7 @@ export function buildGalaxy(app: App): UniverseGroup[] {
 				center: new THREE.Vector3(),
 				radius: 0,
 				alphaStar: null,
+				connectionStyle: CONNECTION_STYLES[hashHue(universeName) % CONNECTION_STYLES.length],
 			};
 			universeMap.set(universeName, universe);
 		}

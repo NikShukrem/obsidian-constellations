@@ -33,6 +33,8 @@ export interface ConstellationGroup {
 	ringStars: StarNode[];
 }
 
+export type ConnectionStyle = "filament" | "stream" | "nebula";
+
 export interface UniverseGroup {
 	name: string;
 	stars: StarNode[];
@@ -41,4 +43,7 @@ export interface UniverseGroup {
 	radius: number;
 	/** Heaviest star overall; the universe label is anchored next to it. */
 	alphaStar: StarNode | null;
+	/** How this universe's constellation connections render — deterministic
+	 * per universe name so it doesn't change on rebuild. See graphBuilder.ts. */
+	connectionStyle: ConnectionStyle;
 }

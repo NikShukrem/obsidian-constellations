@@ -17,6 +17,12 @@ import {
 } from "./graphBuilder";
 import { layoutGalaxy } from "./layout";
 import type { ConstellationGroup, StarNode, UniverseGroup } from "./types";
+
+/** A real constellation is a handful of stars, not a whole subfolder — tag
+ * groups bigger than this skip line/filament rendering (still color and
+ * position their stars normally, and nebula-style groups aren't affected
+ * since a cloud doesn't care how many members it has). */
+const MAX_CONSTELLATION_LINE_MEMBERS = 14;
 import type ConstellationsPlugin from "../main";
 
 export const VIEW_TYPE_CONSTELLATIONS = "constellations-view";
@@ -949,7 +955,19 @@ export class ConstellationsView extends ItemView {
 		}
 	}
 
+	/** Three ways a universe can render its tag connections, assigned
+	 * deterministically per universe in graphBuilder.ts so you get variety
+	 * across the galaxy instead of one style everywhere. */
 	private addConstellationLines(universes: UniverseGroup[]): void {
+		this.addStreamConnections(universes);
+		this.addFilamentConnections(universes);
+		this.addConstellationClouds(universes);
+	}
+
+	/** "stream": the original look — a bright point runs along each
+	 * constellation's path leaving a fading comet-tail, base line never
+	 * fully off. Like debris trailing between colliding galaxies. */
+	private addStreamConnections(universes: UniverseGroup[]): void {
 		if (!this.scene) return;
 		const positions: number[] = [];
 		const colors: number[] = [];
@@ -958,8 +976,10 @@ export class ConstellationsView extends ItemView {
 		const lineColor = new THREE.Color();
 
 		for (const universe of universes) {
+			if (universe.connectionStyle !== "stream") continue;
 			for (const group of universe.constellations) {
-				if (group.ringStars.length < 2) continue;
+				if (group.ringStars.length < 2 || group.ringStars.length > MAX_CONSTELLATION_LINE_MEMBERS)
+					continue;
 				lineColor.setHSL(group.hue / 360, 0.7, 0.65);
 				const groupPhase = Math.random();
 
@@ -1012,6 +1032,91 @@ export class ConstellationsView extends ItemView {
 		lines.userData.isGalaxyContent = true;
 		this.scene.add(lines);
 		this.lineMaterial = material;
+	}
+
+	/** "filament": a dim, gently curved static thread through the ring —
+	 * modeled on cosmic-web gas filaments bridging galaxies, not a crisp
+	 * geometric connector. No animation; it's meant to read as background
+	 * structure. */
+	private addFilamentConnections(universes: UniverseGroup[]): void {
+		if (!this.scene) return;
+		const positions: number[] = [];
+		const colors: number[] = [];
+		const lineColor = new THREE.Color();
+
+		for (const universe of universes) {
+			if (universe.connectionStyle !== "filament") continue;
+			for (const group of universe.constellations) {
+				if (group.ringStars.length < 2 || group.ringStars.length > MAX_CONSTELLATION_LINE_MEMBERS)
+					continue;
+				lineColor.setHSL(group.hue / 360, 0.5, 0.58);
+				const curve = new THREE.CatmullRomCurve3(
+					group.ringStars.map((s) => s.position.clone())
+				);
+				const sampleCount = Math.max(8, group.ringStars.length * 6);
+				const points = curve.getPoints(sampleCount);
+				for (let i = 0; i < points.length - 1; i++) {
+					const a = points[i];
+					const b = points[i + 1];
+					positions.push(a.x, a.y, a.z, b.x, b.y, b.z);
+					colors.push(
+						lineColor.r,
+						lineColor.g,
+						lineColor.b,
+						lineColor.r,
+						lineColor.g,
+						lineColor.b
+					);
+				}
+			}
+		}
+		if (positions.length === 0) return;
+		const geometry = new THREE.BufferGeometry();
+		geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+		geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+		const material = new THREE.LineBasicMaterial({
+			vertexColors: true,
+			transparent: true,
+			opacity: 0.22,
+			depthWrite: false,
+			blending: THREE.AdditiveBlending,
+		});
+		const lines = new THREE.LineSegments(geometry, material);
+		lines.userData.isGalaxyContent = true;
+		this.scene.add(lines);
+	}
+
+	/** "nebula": no per-pair connectors at all — the whole tag group shares
+	 * one soft translucent cloud, like the reflection nebula wrapped around
+	 * the Pleiades. Size follows how far the group's stars actually spread. */
+	private addConstellationClouds(universes: UniverseGroup[]): void {
+		if (!this.scene || !this.glowTexture) return;
+		for (const universe of universes) {
+			if (universe.connectionStyle !== "nebula") continue;
+			for (const group of universe.constellations) {
+				if (group.ringStars.length < 2) continue;
+				let spanRadius = 0;
+				for (const star of group.ringStars) {
+					spanRadius = Math.max(spanRadius, group.center.distanceTo(star.position));
+				}
+				if (spanRadius === 0) continue;
+				const color = new THREE.Color().setHSL(group.hue / 360, 0.6, 0.55);
+				const material = new THREE.SpriteMaterial({
+					map: this.glowTexture,
+					color,
+					transparent: true,
+					opacity: 0.16,
+					blending: THREE.AdditiveBlending,
+					depthWrite: false,
+				});
+				const sprite = new THREE.Sprite(material);
+				sprite.position.copy(group.center);
+				const scale = spanRadius * 2.6;
+				sprite.scale.set(scale, scale, 1);
+				sprite.userData.isGalaxyContent = true;
+				this.scene.add(sprite);
+			}
+		}
 	}
 
 	private addLabels(universes: UniverseGroup[]): void {
