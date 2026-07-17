@@ -36,6 +36,11 @@ const SHAPE_LABELS: Record<ConstellationShape | "mixed", string> = {
 const STAR_LABEL_DISTANCE = 26;
 const MAX_VISIBLE_STAR_LABELS = 22;
 const TAG_LABEL_DISTANCE = 140;
+/** A real constellation is a handful of stars, not a whole subfolder — tag
+ * groups bigger than this still color and group their stars, but stop
+ * drawing the connecting chain so a 100-note folder tag doesn't turn into a
+ * scribble across the whole universe. */
+const MAX_CONSTELLATION_LINE_MEMBERS = 14;
 const DEFAULT_CAMERA_POS = new THREE.Vector3(0, 60, 160);
 const DEFAULT_CAMERA_TARGET = new THREE.Vector3(0, 0, 0);
 const IDLE_ROTATE_DELAY = 12000;
@@ -1026,6 +1031,7 @@ export class ConstellationsView extends ItemView {
 		for (const universe of universes) {
 			for (const group of universe.constellations) {
 				if (group.ringStars.length < 2) continue;
+				if (group.ringStars.length > MAX_CONSTELLATION_LINE_MEMBERS) continue;
 				lineColor.setHSL(group.hue / 360, 0.7, 0.65);
 				const groupPhase = Math.random();
 
