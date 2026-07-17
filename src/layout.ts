@@ -16,17 +16,6 @@ function randomOnSphereDirection(): THREE.Vector3 {
 	);
 }
 
-/** Fibonacci sphere: the i-th of `total` evenly-spaced directions over the
- * full sphere (unlike a 2D Vogel spiral, which only covers one plane). Used
- * to scatter universes through real 3D space instead of a flattened disc —
- * more "debris from an explosion" than "galaxy floating on a table". */
-function fibonacciSphereDirection(index: number, total: number): THREE.Vector3 {
-	const y = total > 1 ? 1 - (index / (total - 1)) * 2 : 0;
-	const radiusAtY = Math.sqrt(Math.max(0, 1 - y * y));
-	const theta = GOLDEN_ANGLE * index;
-	return new THREE.Vector3(Math.cos(theta) * radiusAtY, y, Math.sin(theta) * radiusAtY);
-}
-
 /** Vogel/sunflower spiral: points spaced by sqrt(index) at the golden angle
  * never overlap as long as `spacingUnit` covers each point's own footprint,
  * which is what keeps constellations (and universes) from piling on top of
@@ -101,19 +90,12 @@ export function layoutGalaxy(universes: UniverseGroup[]): void {
 	universes.forEach((universe, i) => {
 		universe.radius = universeFootprints[i];
 
-		// Scattered over the full sphere (not just one plane), with the same
-		// sqrt(index) radial growth the old spiral used to keep things from
-		// overlapping near the middle — reads as debris from an explosion
-		// instead of a flat disc of galaxies.
-		const direction = fibonacciSphereDirection(i, universes.length)
-			.add(
-				new THREE.Vector3(
-					(Math.random() - 0.5) * 0.25,
-					(Math.random() - 0.5) * 0.25,
-					(Math.random() - 0.5) * 0.25
-				)
-			)
-			.normalize();
+		// Fully random direction (not Fibonacci-even coverage) so there's no
+		// correlation between a universe's size rank and its position on the
+		// sphere — actual explosion debris doesn't fly out in neat evenly-
+		// spaced order, it's scattered every which way. Radius still grows
+		// with sqrt(index) to keep universes from overlapping near the center.
+		const direction = randomOnSphereDirection();
 		const r = universeSpacing * Math.sqrt(i + 0.5) * (1 + (Math.random() - 0.5) * 0.35);
 		universe.center.copy(direction).multiplyScalar(r);
 
