@@ -14,21 +14,6 @@ export interface StarNode {
 	/** Hue (0-360) inherited from the star's primary constellation, or a neutral
 	 * dust hue when the star belongs to no constellation. */
 	hue: number;
-	/** Raw outgoing + incoming link count (no tag bonus) — used only to decide
-	 * whether a universe's alpha star is connected enough to anchor a
-	 * planetary system. See MIN_SUN_WEIGHT/MIN_SUN_LINKS in graphBuilder.ts. */
-	linkCount: number;
-	/** Present only in planetary universes, only on non-sun stars. Recomputed
-	 * every frame in ConstellationsView — position itself isn't touched by
-	 * layoutGalaxy beyond the initial placement. */
-	orbit?: {
-		center: THREE.Vector3;
-		radius: number;
-		phase: number;
-		speed: number;
-		u: THREE.Vector3;
-		v: THREE.Vector3;
-	};
 }
 
 export interface ConstellationGroup {
@@ -56,10 +41,4 @@ export interface UniverseGroup {
 	radius: number;
 	/** Heaviest star overall; the universe label is anchored next to it. */
 	alphaStar: StarNode | null;
-	/** True when alphaStar is connected enough to anchor a planetary system
-	 * (see MIN_SUN_WEIGHT/MIN_SUN_LINKS in graphBuilder.ts). Weakly-connected
-	 * universes stay on the regular constellation-shape layout. */
-	isPlanetary: boolean;
-	/** Same object as alphaStar, only set (and only meaningful) when isPlanetary. */
-	sunStar: StarNode | null;
 }

@@ -1,176 +1,8 @@
 import * as THREE from "three";
-import { DUST_HUE, hashHue } from "./graphBuilder";
 import type { StarNode, UniverseGroup } from "./types";
 
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 const SPIRAL_ARM_MIN_GROUPS = 5;
-
-export type ConstellationShape =
-	| "ring"
-	| "arc"
-	| "zigzag"
-	| "cluster"
-	| "spiral"
-	| "sphere"
-	| "helix"
-	| "starburst";
-export const CONSTELLATION_SHAPES: ConstellationShape[] = [
-	"ring",
-	"arc",
-	"zigzag",
-	"cluster",
-	"spiral",
-	"sphere",
-	"helix",
-	"starburst",
-];
-
-/** Deterministic (stable across rebuilds) shape pick per constellation, so
- * they stop all reading as the same circle at different sizes. */
-function pickShape(seed: string): ConstellationShape {
-	return CONSTELLATION_SHAPES[hashHue(seed) % CONSTELLATION_SHAPES.length];
-}
-
-/** Local 3D layout for a constellation's stars, in the order they'll be
- * chain-connected. `pulls` (0-1 per star) still pulls heavier stars toward
- * the center on the shapes where "center" is a meaningful concept.
- *
- * "ring"/"arc"/"zigzag"/"spiral" stay genuinely flat (z stays 0, or close to
- * it) — real constellations *are* flat asterisms, and keeping some of them
- * that way is what makes the volumetric ones read as a deliberate shape
- * instead of everything being noise. "cluster"/"sphere"/"helix"/"starburst"
- * use all three axes on purpose. */
-function shapePositions(
-	shape: ConstellationShape,
-	count: number,
-	ringRadius: number,
-	pulls: number[]
-): { x: number; y: number; z: number }[] {
-	const points: { x: number; y: number; z: number }[] = [];
-
-	switch (shape) {
-		case "zigzag": {
-			// A wandering path with sharp random turns — closer to how real
-			// asterisms (Orion's belt, the Big Dipper) actually read than a
-			// tidy circle does. Wanders a bit out of plane too, not just
-			// side to side.
-			let angle = Math.random() * Math.PI * 2;
-			let x = 0;
-			let y = 0;
-			let z = 0;
-			points.push({ x, y, z });
-			for (let i = 1; i < count; i++) {
-				angle += (Math.random() - 0.5) * 2.3;
-				const step = ringRadius * (0.55 + Math.random() * 0.45);
-				x += Math.cos(angle) * step;
-				y += Math.sin(angle) * step;
-				z += (Math.random() - 0.5) * step * 0.5;
-				points.push({ x, y, z });
-			}
-			const cx = points.reduce((s, p) => s + p.x, 0) / points.length;
-			const cy = points.reduce((s, p) => s + p.y, 0) / points.length;
-			const cz = points.reduce((s, p) => s + p.z, 0) / points.length;
-			for (const p of points) {
-				p.x -= cx;
-				p.y -= cy;
-				p.z -= cz;
-			}
-			break;
-		}
-		case "cluster": {
-			// A genuine 3D nebula blob — random point inside a ball, denser
-			// toward the middle for heavier stars — instead of a flat scatter
-			// with a thin fuzz of depth on top.
-			for (let i = 0; i < count; i++) {
-				const dist = ringRadius * (0.25 + 0.85 * (1 - pulls[i])) * Math.cbrt(Math.random());
-				const theta = Math.random() * Math.PI * 2;
-				const phi = Math.acos(2 * Math.random() - 1);
-				points.push({
-					x: Math.sin(phi) * Math.cos(theta) * dist,
-					y: Math.sin(phi) * Math.sin(theta) * dist,
-					z: Math.cos(phi) * dist,
-				});
-			}
-			break;
-		}
-		case "sphere": {
-			// A hollow globular cluster: points spread evenly over a sphere
-			// surface (golden-angle spiral sampling), heavier stars pulled
-			// onto smaller inner shells rather than all sharing one radius.
-			for (let i = 0; i < count; i++) {
-				const t = count <= 1 ? 0.5 : i / (count - 1);
-				const yy = 1 - t * 2;
-				const radiusAtY = Math.sqrt(Math.max(0, 1 - yy * yy));
-				const theta = i * GOLDEN_ANGLE;
-				const shellRadius = ringRadius * (0.35 + 0.65 * (1 - pulls[i]));
-				points.push({
-					x: Math.cos(theta) * radiusAtY * shellRadius,
-					y: Math.sin(theta) * radiusAtY * shellRadius,
-					z: yy * shellRadius,
-				});
-			}
-			break;
-		}
-		case "helix": {
-			// A spring/DNA-helix winding through real depth, not just around
-			// a flat circle.
-			const turns = 1.5 + Math.random() * 1.3;
-			for (let i = 0; i < count; i++) {
-				const t = count <= 1 ? 0 : i / (count - 1);
-				const angle = t * Math.PI * 2 * turns;
-				const radius = ringRadius * 0.55;
-				points.push({
-					x: Math.cos(angle) * radius,
-					y: Math.sin(angle) * radius,
-					z: (t - 0.5) * ringRadius * 1.7,
-				});
-			}
-			break;
-		}
-		case "starburst": {
-			// Points radiating outward in random 3D directions, like a
-			// supernova remnant frozen mid-expansion.
-			for (let i = 0; i < count; i++) {
-				const dir = randomOnSphereDirection();
-				const dist = ringRadius * (0.2 + 0.9 * (1 - pulls[i])) * (0.4 + 0.6 * Math.random());
-				points.push({ x: dir.x * dist, y: dir.y * dist, z: dir.z * dist });
-			}
-			break;
-		}
-		case "spiral": {
-			for (let i = 0; i < count; i++) {
-				const angle = i * GOLDEN_ANGLE;
-				const radius = ringRadius * 0.34 * Math.sqrt(i + 0.5);
-				points.push({ x: Math.cos(angle) * radius, y: Math.sin(angle) * radius, z: 0 });
-			}
-			break;
-		}
-		case "arc": {
-			// An open arc instead of a closed loop — random sweep between a
-			// quarter and three-quarters of a full circle.
-			const span = Math.PI * (0.6 + Math.random() * 0.9);
-			const start = Math.random() * Math.PI * 2;
-			for (let i = 0; i < count; i++) {
-				const t = count <= 1 ? 0 : i / (count - 1);
-				const angle = start + t * span;
-				const radius = ringRadius * (0.3 + 0.7 * (1 - pulls[i]));
-				points.push({ x: Math.cos(angle) * radius, y: Math.sin(angle) * radius, z: 0 });
-			}
-			break;
-		}
-		case "ring":
-		default: {
-			for (let i = 0; i < count; i++) {
-				const angle = (i / count) * Math.PI * 2;
-				const radius = ringRadius * (0.3 + 0.7 * (1 - pulls[i]));
-				points.push({ x: Math.cos(angle) * radius, y: Math.sin(angle) * radius, z: 0 });
-			}
-			break;
-		}
-	}
-
-	return points;
-}
 
 function randomOnSphereDirection(): THREE.Vector3 {
 	const u = Math.random();
@@ -247,90 +79,12 @@ function pickPrimaryConstellation(
 	return primary;
 }
 
-/** Planetary layout for a universe whose alpha star is connected enough to
- * anchor one (see MIN_SUN_WEIGHT/MIN_SUN_LINKS in graphBuilder.ts): the sun
- * sits fixed at the universe center, everything else gets an orbit instead
- * of a spot on a constellation shape. Constellation tag groups still form
- * and still draw lines (ConstellationsView animates those to follow the
- * moving endpoints) — only the *positioning* skips shapes/spiral-arms/bulge. */
-function layoutGalaxyPlanetary(universe: UniverseGroup): void {
-	const sun = universe.sunStar;
-	if (!sun) return;
-
-	sun.position.copy(universe.center);
-	sun.orbit = undefined;
-
-	for (const group of universe.constellations) {
-		group.ringStars = [];
-		group.alphaStar = null;
-	}
-
-	const orbiting = universe.stars.filter((s) => s !== sun);
-	if (orbiting.length === 0) return;
-
-	const primaryOf = pickPrimaryConstellation(universe);
-	const groupsByKey = new Map(universe.constellations.map((g) => [g.key, g]));
-	const starsByGroup = new Map<string, StarNode[]>();
-	for (const star of orbiting) {
-		const key = primaryOf.get(star.id);
-		if (!key) continue;
-		const list = starsByGroup.get(key) ?? [];
-		list.push(star);
-		starsByGroup.set(key, list);
-	}
-	for (const [key, unsorted] of starsByGroup) {
-		const group = groupsByKey.get(key);
-		if (!group) continue;
-		const sorted = [...unsorted].sort((a, b) => a.name.localeCompare(b.name));
-		group.ringStars = sorted;
-		group.alphaStar = sorted.reduce((a, b) => (b.weight > a.weight ? b : a));
-	}
-
-	const weights = orbiting.map((s) => s.weight);
-	const minW = Math.min(...weights);
-	const maxW = Math.max(...weights);
-	// Scaled off the universe's own footprint (not a fixed constant) so a
-	// system with a hundred orbiting notes actually spreads across real
-	// space instead of piling every one of them a few units from the sun,
-	// which used to blow out into one overexposed ball once bloom hit it.
-	const minOrbitRadius = Math.max(6, universe.radius * 0.12);
-	const maxOrbitRadius = Math.max(universe.radius * 0.9, minOrbitRadius + 10);
-
-	for (const star of orbiting) {
-		// Heavier (more connected) notes orbit closer to the sun, but only
-		// partway — capping the pull at 0.7 keeps even the heaviest stars
-		// from stacking right on top of the sun and each other.
-		const pull = normalizedWeight(star, minW, maxW) * 0.7;
-		const radius =
-			minOrbitRadius +
-			(maxOrbitRadius - minOrbitRadius) * (1 - pull) * (0.6 + 0.4 * Math.random());
-		// Each star gets its own orbital plane so the whole system doesn't
-		// flatten into one disc — more like a cloud of comets than rings.
-		const { u, v } = randomPlaneBasis();
-		const phase = Math.random() * Math.PI * 2;
-		const speed = (0.05 + Math.random() * 0.12) / Math.sqrt(radius / minOrbitRadius);
-		star.orbit = { center: universe.center.clone(), radius, phase, speed, u, v };
-		star.position
-			.copy(universe.center)
-			.addScaledVector(u, Math.cos(phase) * radius)
-			.addScaledVector(v, Math.sin(phase) * radius);
-
-		const key = primaryOf.get(star.id);
-		star.hue = key ? groupsByKey.get(key)!.hue : DUST_HUE;
-	}
-}
-
-export function layoutGalaxy(universes: UniverseGroup[], forcedShape?: ConstellationShape): void {
+export function layoutGalaxy(universes: UniverseGroup[]): void {
 	universes.sort((a, b) => b.stars.length - a.stars.length);
 
-	// Planetary universes get 10x the footprint: their stars are spread by
-	// orbit radius (scaled off this same number), and packing hundreds of
-	// orbiting notes into the same footprint a regular constellation-shape
-	// universe would use is what overexposed them into a solid ball.
-	const universeFootprints = universes.map((u) => {
-		const base = 20 + Math.sqrt(u.stars.length) * 7.5 + u.constellations.length * 5;
-		return u.isPlanetary ? base * 10 : base;
-	});
+	const universeFootprints = universes.map(
+		(u) => 20 + Math.sqrt(u.stars.length) * 7.5 + u.constellations.length * 5
+	);
 	const universeSpacing = Math.max(...universeFootprints, 1) * 2.6;
 
 	universes.forEach((universe, i) => {
@@ -343,11 +97,6 @@ export function layoutGalaxy(universes: UniverseGroup[], forcedShape?: Constella
 			(Math.random() - 0.5) * 0.25 * r,
 			Math.sin(theta) * r
 		);
-
-		if (universe.isPlanetary) {
-			layoutGalaxyPlanetary(universe);
-			return;
-		}
 
 		const primaryOf = pickPrimaryConstellation(universe);
 
@@ -439,28 +188,24 @@ export function layoutGalaxy(universes: UniverseGroup[], forcedShape?: Constella
 			const weights = stars.map((s) => s.weight);
 			const minW = Math.min(...weights);
 			const maxW = Math.max(...weights);
-			const pulls = stars.map((s) => normalizedWeight(s, minW, maxW));
 			// Each constellation gets its own tilted plane instead of everyone
 			// sitting flat on the world XZ plane — real constellations don't
 			// all share one orientation either.
 			const { u, v, normal } = randomPlaneBasis();
-			// ...and its own outline instead of everyone being a same-shaped
-			// circle at a different size. u/v/normal already form a full 3D
-			// basis, so shapes that carry real z (cluster/sphere/helix/
-			// starburst) come out genuinely volumetric, not flattened.
-			const shape = forcedShape ?? pickShape(group.key);
-			const positions3d = shapePositions(shape, stars.length, ringRadius, pulls);
 			stars.forEach((star, si) => {
-				const { x, y, z } = positions3d[si];
-				const jitter = ringRadius * 0.06;
-				const jitterX = (Math.random() - 0.5) * jitter;
-				const jitterY = (Math.random() - 0.5) * jitter;
-				const jitterZ = (Math.random() - 0.5) * jitter;
+				const angle = (si / stars.length) * Math.PI * 2 + (Math.random() - 0.5) * 0.5;
+				// Heavier stars (more links/backlinks/tags) are gravitationally
+				// pulled toward the constellation's center; light stars drift outward.
+				const pull = normalizedWeight(star, minW, maxW);
+				const radius = ringRadius * (0.3 + 0.7 * (1 - pull));
+				const jitter = (Math.random() - 0.5) * ringRadius * 0.25;
+				const inPlane = radius + jitter;
+				const outOfPlane = (Math.random() - 0.5) * ringRadius * 0.12;
 				star.position
 					.copy(group.center)
-					.addScaledVector(u, x + jitterX)
-					.addScaledVector(v, y + jitterY)
-					.addScaledVector(normal, z + jitterZ);
+					.addScaledVector(u, Math.cos(angle) * inPlane)
+					.addScaledVector(v, Math.sin(angle) * inPlane)
+					.addScaledVector(normal, outOfPlane);
 				star.hue = group.hue;
 				placed.add(star.id);
 			});
