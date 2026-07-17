@@ -78,5 +78,9 @@ export function buildMockGalaxy(): UniverseGroup[] {
 		buildUniverse("NebulaDemo", "nebula", [6, 10, 4], 30),
 		buildUniverse("BigFolderTags", "stream", [60, 80, 25, 6, 4], 40),
 		buildUniverse("SmallOne", "filament", [3], 5),
+		// Stress test: mirrors the real "04-Архивные-файлы" folder-tag group
+		// (1200+ notes sharing one tag) that used to balloon the whole
+		// universe's scale and wash out the screen with an oversized cloud.
+		buildUniverse("MegaFolderTag", "stream", [1243, 8, 5], 20),
 	];
 }

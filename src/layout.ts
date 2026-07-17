@@ -104,7 +104,13 @@ export function layoutGalaxy(universes: UniverseGroup[]): void {
 		const sortedGroups = [...universe.constellations].sort(
 			(a, b) => b.stars.length - a.stars.length || a.tag.localeCompare(b.tag)
 		);
-		const footprints = sortedGroups.map((g) => 2.4 + g.stars.length * 0.9);
+		// Capped — an uncapped footprint on a 1000+-member folder-tag group
+		// (from the folder-tag extraction) would blow the group's spacing
+		// out to thousands of units, dragging the whole universe's scale
+		// with it. These huge groups render as a single cloud anyway (see
+		// MAX_CONSTELLATION_LINE_MEMBERS in view.ts), so there's no reason
+		// for them to physically occupy more space than a normal cluster.
+		const footprints = sortedGroups.map((g) => Math.min(2.4 + g.stars.length * 0.9, 40));
 		const localSpacing = Math.max(...footprints, 1) * 2.7;
 
 		let farthestExtent = 0;
@@ -185,7 +191,10 @@ export function layoutGalaxy(universes: UniverseGroup[]): void {
 			group.ringStars = stars;
 			group.alphaStar = stars.reduce((a, b) => (b.weight > a.weight ? b : a));
 
-			const ringRadius = 3.4 + stars.length * 1.3;
+			// Same cap reasoning as the footprint above: past a certain size
+			// this is going to render as one cloud, not individual visible
+			// stars, so let it pack in tight instead of ballooning outward.
+			const ringRadius = Math.min(3.4 + stars.length * 1.3, 45);
 			const weights = stars.map((s) => s.weight);
 			const minW = Math.min(...weights);
 			const maxW = Math.max(...weights);

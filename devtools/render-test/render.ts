@@ -337,7 +337,7 @@ async function main() {
 				});
 				const sprite = new THREE.Sprite(material);
 				sprite.position.copy(group.center);
-				const scale = spanRadius * 2.6;
+				const scale = Math.min(spanRadius * 2.6, 130);
 				sprite.scale.set(scale, scale, 1);
 				scene.add(sprite);
 			}

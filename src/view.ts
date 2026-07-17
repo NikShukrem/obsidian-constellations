@@ -1111,7 +1111,10 @@ export class ConstellationsView extends ItemView {
 				});
 				const sprite = new THREE.Sprite(material);
 				sprite.position.copy(group.center);
-				const scale = spanRadius * 2.6;
+				// Capped defensively — layout.ts already bounds how far a huge
+				// group's stars can spread, but this keeps a runaway spanRadius
+				// from ever washing out the whole screen the way it used to.
+				const scale = Math.min(spanRadius * 2.6, 130);
 				sprite.scale.set(scale, scale, 1);
 				sprite.userData.isGalaxyContent = true;
 				this.scene.add(sprite);
