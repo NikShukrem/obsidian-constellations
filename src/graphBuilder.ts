@@ -5,6 +5,14 @@ import type { ConstellationGroup, StarNode, UniverseGroup } from "./types";
 const ROOT_UNIVERSE_NAME = "Root";
 export const DUST_HUE = 225;
 
+/** A universe's alpha star needs to clear both bars before its universe
+ * renders as a planetary system (fixed sun, everything else in orbit)
+ * instead of the regular constellation-shape layout. Weight alone isn't
+ * enough — a note can be "heavy" mostly from tags, which says nothing about
+ * how connected it actually is. */
+const MIN_SUN_WEIGHT = 15;
+const MIN_SUN_LINKS = 8;
+
 function universeOf(file: TFile): string {
 	const path = file.path;
 	const slash = path.indexOf("/");
@@ -70,11 +78,15 @@ export function buildGalaxy(app: App): UniverseGroup[] {
 				center: new THREE.Vector3(),
 				radius: 0,
 				alphaStar: null,
+				isPlanetary: false,
+				sunStar: null,
 			};
 			universeMap.set(universeName, universe);
 		}
 
 		const weight = computeStarWeight(app, file, backlinkCounts);
+		const outgoing = (cache?.links?.length ?? 0) + (cache?.embeds?.length ?? 0);
+		const incoming = backlinkCounts.get(file.path) ?? 0;
 
 		const star: StarNode = {
 			id: file.path,
@@ -85,6 +97,7 @@ export function buildGalaxy(app: App): UniverseGroup[] {
 			position: new THREE.Vector3(),
 			weight,
 			hue: DUST_HUE,
+			linkCount: outgoing + incoming,
 		};
 		universe.stars.push(star);
 	}
@@ -118,6 +131,12 @@ export function buildGalaxy(app: App): UniverseGroup[] {
 			universe.stars.length > 0
 				? universe.stars.reduce((a, b) => (b.weight > a.weight ? b : a))
 				: null;
+
+		universe.isPlanetary =
+			!!universe.alphaStar &&
+			universe.alphaStar.weight >= MIN_SUN_WEIGHT &&
+			universe.alphaStar.linkCount >= MIN_SUN_LINKS;
+		universe.sunStar = universe.isPlanetary ? universe.alphaStar : null;
 	}
 
 	return Array.from(universeMap.values());

@@ -220,6 +220,12 @@ export class ConstellationsView extends ItemView {
 	private starLayers: THREE.Points[] = [];
 	private starMaterials: THREE.ShaderMaterial[] = [];
 	private lineMaterial: THREE.ShaderMaterial | null = null;
+	private lineGeometry: THREE.BufferGeometry | null = null;
+	private orbitingStars: StarNode[] = [];
+	private orbitingLayers = new Set<number>();
+	private lineOrbitVertices: { index: number; star: StarNode }[] = [];
+	private starLabelByStarId = new Map<string, CSS2DObject>();
+	private tagLabelByStarId = new Map<string, CSS2DObject>();
 	private starsByLayer: StarNode[][] = [];
 	private starIndex = new Map<string, { layer: number; vertexIndex: number }>();
 	private searchQuery = "";
@@ -233,6 +239,7 @@ export class ConstellationsView extends ItemView {
 	private groupsByStar = new Map<string, ConstellationGroup[]>();
 	private starLabels: CSS2DEntry<StarNode>[] = [];
 	private tagLabels: CSS2DEntry<ConstellationGroup>[] = [];
+	private universeLabels: CSS2DEntry<UniverseGroup>[] = [];
 	private tooltipEl: HTMLDivElement | null = null;
 	private infoPanelEl: HTMLDivElement | null = null;
 	private resizeObserver: ResizeObserver | null = null;
@@ -722,12 +729,19 @@ export class ConstellationsView extends ItemView {
 		this.stars = [];
 		this.starLabels = [];
 		this.tagLabels = [];
+		this.universeLabels = [];
 		this.groupsByStar.clear();
 		this.quasarHalo = null;
 		this.quasarJetMaterials = [];
 		this.activeFlashes = [];
 		this.nebulae = [];
 		this.lineMaterial = null;
+		this.lineGeometry = null;
+		this.orbitingStars = [];
+		this.orbitingLayers.clear();
+		this.lineOrbitVertices = [];
+		this.starLabelByStarId.clear();
+		this.tagLabelByStarId.clear();
 	}
 
 	private populateScene(universes: UniverseGroup[]): void {
@@ -905,6 +919,10 @@ export class ConstellationsView extends ItemView {
 			this.starsByLayer.push(bucket.stars);
 			bucket.stars.forEach((star, vertexIndex) => {
 				this.starIndex.set(star.id, { layer: layerIndex, vertexIndex });
+				if (star.orbit) {
+					this.orbitingStars.push(star);
+					this.orbitingLayers.add(layerIndex);
+				}
 			});
 		});
 
@@ -1016,8 +1034,12 @@ export class ConstellationsView extends ItemView {
 				const totalLength = cumulative[cumulative.length - 1] || 1;
 
 				for (let i = 0; i < group.ringStars.length - 1; i++) {
-					const a = group.ringStars[i].position;
-					const b = group.ringStars[i + 1].position;
+					const starA = group.ringStars[i];
+					const starB = group.ringStars[i + 1];
+					const a = starA.position;
+					const b = starB.position;
+					const vertexIndexA = positions.length / 3;
+					const vertexIndexB = vertexIndexA + 1;
 					positions.push(a.x, a.y, a.z, b.x, b.y, b.z);
 					colors.push(
 						lineColor.r,
@@ -1029,6 +1051,8 @@ export class ConstellationsView extends ItemView {
 					);
 					progress.push(cumulative[i] / totalLength, cumulative[i + 1] / totalLength);
 					phases.push(groupPhase, groupPhase);
+					if (starA.orbit) this.lineOrbitVertices.push({ index: vertexIndexA, star: starA });
+					if (starB.orbit) this.lineOrbitVertices.push({ index: vertexIndexB, star: starB });
 				}
 			}
 		}
@@ -1056,6 +1080,7 @@ export class ConstellationsView extends ItemView {
 		lines.userData.isGalaxyContent = true;
 		this.scene.add(lines);
 		this.lineMaterial = material;
+		this.lineGeometry = geometry;
 	}
 
 	private addLabels(universes: UniverseGroup[]): void {
@@ -1074,6 +1099,7 @@ export class ConstellationsView extends ItemView {
 			label.position.set(anchor.x, anchor.y + 2.6, anchor.z);
 			label.userData.isGalaxyContent = true;
 			this.scene.add(label);
+			this.universeLabels.push({ item: universe, obj: label });
 
 			for (const group of universe.constellations) {
 				if (!group.alphaStar) continue;
@@ -1088,6 +1114,7 @@ export class ConstellationsView extends ItemView {
 				tagLabel.visible = false;
 				this.scene.add(tagLabel);
 				this.tagLabels.push({ item: group, obj: tagLabel });
+				if (group.alphaStar.orbit) this.tagLabelByStarId.set(group.alphaStar.id, tagLabel);
 			}
 
 			for (const star of universe.stars) {
@@ -1104,6 +1131,7 @@ export class ConstellationsView extends ItemView {
 				nameLabel.visible = false;
 				this.scene.add(nameLabel);
 				this.starLabels.push({ item: star, obj: nameLabel });
+				if (star.orbit) this.starLabelByStarId.set(star.id, nameLabel);
 			}
 		}
 	}
@@ -1140,6 +1168,12 @@ export class ConstellationsView extends ItemView {
 		for (const { item, obj } of this.tagLabels) {
 			const anchor = item.alphaStar?.position ?? item.center;
 			obj.visible = camPos.distanceTo(anchor) < TAG_LABEL_DISTANCE;
+		}
+
+		// A universe's own name stops being useful once you've flown inside
+		// it — it just floats in the middle of the thing you're looking at.
+		for (const { item, obj } of this.universeLabels) {
+			obj.visible = camPos.distanceTo(item.center) >= item.radius;
 		}
 	}
 
@@ -1443,6 +1477,55 @@ export class ConstellationsView extends ItemView {
 		if (this.controls) this.controls.autoRotate = false;
 	}
 
+	/** Planetary universes: recompute each orbiting star's position and push
+	 * it into both the star-point geometry and any constellation-line
+	 * vertices that reference it, so the lines stay attached instead of
+	 * drifting away from their moving endpoints. Everything else (non-
+	 * planetary universes) has no `.orbit` on any star, so these loops are
+	 * empty and this is a no-op. */
+	private updateOrbits(time: number): void {
+		if (this.orbitingStars.length === 0) return;
+		const t = time / 1000;
+
+		for (const star of this.orbitingStars) {
+			const orbit = star.orbit;
+			if (!orbit) continue;
+			const angle = orbit.phase + t * orbit.speed;
+			star.position
+				.copy(orbit.center)
+				.addScaledVector(orbit.u, Math.cos(angle) * orbit.radius)
+				.addScaledVector(orbit.v, Math.sin(angle) * orbit.radius);
+
+			const loc = this.starIndex.get(star.id);
+			if (loc) {
+				const attr = this.starLayers[loc.layer]?.geometry.getAttribute("position") as
+					| THREE.BufferAttribute
+					| undefined;
+				attr?.setXYZ(loc.vertexIndex, star.position.x, star.position.y, star.position.z);
+			}
+
+			const starLabel = this.starLabelByStarId.get(star.id);
+			starLabel?.position.set(star.position.x, star.position.y - 0.85, star.position.z);
+			const tagLabel = this.tagLabelByStarId.get(star.id);
+			tagLabel?.position.set(star.position.x, star.position.y + 1.7, star.position.z);
+		}
+
+		for (const layer of this.orbitingLayers) {
+			const attr = this.starLayers[layer]?.geometry.getAttribute("position") as
+				| THREE.BufferAttribute
+				| undefined;
+			if (attr) attr.needsUpdate = true;
+		}
+
+		if (this.lineOrbitVertices.length > 0 && this.lineGeometry) {
+			const attr = this.lineGeometry.getAttribute("position") as THREE.BufferAttribute;
+			for (const { index, star } of this.lineOrbitVertices) {
+				attr.setXYZ(index, star.position.x, star.position.y, star.position.z);
+			}
+			attr.needsUpdate = true;
+		}
+	}
+
 	private animate = (now?: number): void => {
 		this.animationHandle = window.requestAnimationFrame(this.animate);
 		const time = now ?? performance.now();
@@ -1463,6 +1546,7 @@ export class ConstellationsView extends ItemView {
 		if (this.lineMaterial) this.lineMaterial.uniforms.uTime.value = time / 1000;
 		this.updateComets(time);
 		this.updateFlashes(time);
+		this.updateOrbits(time);
 
 		if (this.quasarHalo) {
 			const pulse = 0.85 + 0.15 * Math.sin((time / 1000) * 1.2);

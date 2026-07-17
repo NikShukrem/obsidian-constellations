@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { hashHue } from "./graphBuilder";
+import { DUST_HUE, hashHue } from "./graphBuilder";
 import type { StarNode, UniverseGroup } from "./types";
 
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
@@ -247,6 +247,74 @@ function pickPrimaryConstellation(
 	return primary;
 }
 
+/** Planetary layout for a universe whose alpha star is connected enough to
+ * anchor one (see MIN_SUN_WEIGHT/MIN_SUN_LINKS in graphBuilder.ts): the sun
+ * sits fixed at the universe center, everything else gets an orbit instead
+ * of a spot on a constellation shape. Constellation tag groups still form
+ * and still draw lines (ConstellationsView animates those to follow the
+ * moving endpoints) — only the *positioning* skips shapes/spiral-arms/bulge. */
+function layoutGalaxyPlanetary(universe: UniverseGroup): void {
+	const sun = universe.sunStar;
+	if (!sun) return;
+
+	sun.position.copy(universe.center);
+	sun.orbit = undefined;
+
+	for (const group of universe.constellations) {
+		group.ringStars = [];
+		group.alphaStar = null;
+	}
+
+	const orbiting = universe.stars.filter((s) => s !== sun);
+	if (orbiting.length === 0) return;
+
+	const primaryOf = pickPrimaryConstellation(universe);
+	const groupsByKey = new Map(universe.constellations.map((g) => [g.key, g]));
+	const starsByGroup = new Map<string, StarNode[]>();
+	for (const star of orbiting) {
+		const key = primaryOf.get(star.id);
+		if (!key) continue;
+		const list = starsByGroup.get(key) ?? [];
+		list.push(star);
+		starsByGroup.set(key, list);
+	}
+	for (const [key, unsorted] of starsByGroup) {
+		const group = groupsByKey.get(key);
+		if (!group) continue;
+		const sorted = [...unsorted].sort((a, b) => a.name.localeCompare(b.name));
+		group.ringStars = sorted;
+		group.alphaStar = sorted.reduce((a, b) => (b.weight > a.weight ? b : a));
+	}
+
+	const weights = orbiting.map((s) => s.weight);
+	const minW = Math.min(...weights);
+	const maxW = Math.max(...weights);
+	const minOrbitRadius = 3.5;
+	const maxOrbitRadius = Math.max(universe.radius, minOrbitRadius + 6);
+
+	for (const star of orbiting) {
+		// Heavier (more connected) notes orbit closer to the sun; a random
+		// factor keeps same-weight stars from all landing on one shell.
+		const pull = normalizedWeight(star, minW, maxW);
+		const radius =
+			minOrbitRadius +
+			(maxOrbitRadius - minOrbitRadius) * (1 - pull) * (0.5 + 0.5 * Math.random());
+		// Each star gets its own orbital plane so the whole system doesn't
+		// flatten into one disc — more like a cloud of comets than rings.
+		const { u, v } = randomPlaneBasis();
+		const phase = Math.random() * Math.PI * 2;
+		const speed = (0.05 + Math.random() * 0.12) / Math.sqrt(radius / minOrbitRadius);
+		star.orbit = { center: universe.center.clone(), radius, phase, speed, u, v };
+		star.position
+			.copy(universe.center)
+			.addScaledVector(u, Math.cos(phase) * radius)
+			.addScaledVector(v, Math.sin(phase) * radius);
+
+		const key = primaryOf.get(star.id);
+		star.hue = key ? groupsByKey.get(key)!.hue : DUST_HUE;
+	}
+}
+
 export function layoutGalaxy(universes: UniverseGroup[], forcedShape?: ConstellationShape): void {
 	universes.sort((a, b) => b.stars.length - a.stars.length);
 
@@ -265,6 +333,11 @@ export function layoutGalaxy(universes: UniverseGroup[], forcedShape?: Constella
 			(Math.random() - 0.5) * 0.25 * r,
 			Math.sin(theta) * r
 		);
+
+		if (universe.isPlanetary) {
+			layoutGalaxyPlanetary(universe);
+			return;
+		}
 
 		const primaryOf = pickPrimaryConstellation(universe);
 
