@@ -289,16 +289,21 @@ function layoutGalaxyPlanetary(universe: UniverseGroup): void {
 	const weights = orbiting.map((s) => s.weight);
 	const minW = Math.min(...weights);
 	const maxW = Math.max(...weights);
-	const minOrbitRadius = 3.5;
-	const maxOrbitRadius = Math.max(universe.radius, minOrbitRadius + 6);
+	// Scaled off the universe's own footprint (not a fixed constant) so a
+	// system with a hundred orbiting notes actually spreads across real
+	// space instead of piling every one of them a few units from the sun,
+	// which used to blow out into one overexposed ball once bloom hit it.
+	const minOrbitRadius = Math.max(6, universe.radius * 0.12);
+	const maxOrbitRadius = Math.max(universe.radius * 0.9, minOrbitRadius + 10);
 
 	for (const star of orbiting) {
-		// Heavier (more connected) notes orbit closer to the sun; a random
-		// factor keeps same-weight stars from all landing on one shell.
-		const pull = normalizedWeight(star, minW, maxW);
+		// Heavier (more connected) notes orbit closer to the sun, but only
+		// partway — capping the pull at 0.7 keeps even the heaviest stars
+		// from stacking right on top of the sun and each other.
+		const pull = normalizedWeight(star, minW, maxW) * 0.7;
 		const radius =
 			minOrbitRadius +
-			(maxOrbitRadius - minOrbitRadius) * (1 - pull) * (0.5 + 0.5 * Math.random());
+			(maxOrbitRadius - minOrbitRadius) * (1 - pull) * (0.6 + 0.4 * Math.random());
 		// Each star gets its own orbital plane so the whole system doesn't
 		// flatten into one disc — more like a cloud of comets than rings.
 		const { u, v } = randomPlaneBasis();

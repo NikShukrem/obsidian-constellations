@@ -448,7 +448,11 @@ export class ConstellationsView extends ItemView {
 
 		const composer = new EffectComposer(renderer);
 		composer.addPass(new RenderPass(scene, camera));
-		const bloom = new UnrealBloomPass(new THREE.Vector2(width, height), 1.1, 0.55, 0.12);
+		// Lower strength / higher threshold than the original 1.1/0.55/0.12 —
+		// dense clusters (planetary systems especially) were overexposing
+		// into a single blown-out white ball once enough bright points
+		// overlapped on screen.
+		const bloom = new UnrealBloomPass(new THREE.Vector2(width, height), 0.75, 0.5, 0.22);
 		composer.addPass(bloom);
 
 		const labelRenderer = new CSS2DRenderer();
