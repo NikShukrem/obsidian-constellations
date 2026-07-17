@@ -15,13 +15,24 @@ import {
 	DUST_HUE,
 	hashHue,
 } from "./graphBuilder";
-import { layoutGalaxy } from "./layout";
+import { CONSTELLATION_SHAPES, layoutGalaxy, type ConstellationShape } from "./layout";
 import type { ConstellationGroup, StarNode, UniverseGroup } from "./types";
 import type ConstellationsPlugin from "../main";
 
 export const VIEW_TYPE_CONSTELLATIONS = "constellations-view";
 
 const DUST_BACKGROUND_COLOR = new THREE.Color(0x6c7086);
+const SHAPE_LABELS: Record<ConstellationShape | "mixed", string> = {
+	mixed: "Смешано",
+	ring: "Кольца",
+	arc: "Дуги",
+	zigzag: "Зигзаги",
+	cluster: "Скопления",
+	spiral: "Спирали (плоские)",
+	sphere: "Сферы",
+	helix: "Спирали-пружины",
+	starburst: "Вспышки",
+};
 const STAR_LABEL_DISTANCE = 26;
 const MAX_VISIBLE_STAR_LABELS = 22;
 const TAG_LABEL_DISTANCE = 140;
@@ -243,13 +254,20 @@ export class ConstellationsView extends ItemView {
 	private toolbarEl: HTMLDivElement | null = null;
 	private galaxyMenuEl: HTMLDivElement | null = null;
 	private galaxyMenuOpen = false;
+	private shapeMenuEl: HTMLDivElement | null = null;
+	private shapeMenuOpen = false;
+	private shapeMode: ConstellationShape | "mixed" = "mixed";
 	private onPointerMove = (ev: PointerEvent) => this.handlePointerMove(ev);
 	private onClick = (ev: MouseEvent) => this.handleClick(ev);
 	private onDocumentClick = (ev: MouseEvent) => {
-		if (!this.galaxyMenuOpen || !this.toolbarEl) return;
-		if (!this.toolbarEl.contains(ev.target as Node)) {
+		if (!this.toolbarEl || this.toolbarEl.contains(ev.target as Node)) return;
+		if (this.galaxyMenuOpen) {
 			this.galaxyMenuOpen = false;
 			this.galaxyMenuEl?.hide();
+		}
+		if (this.shapeMenuOpen) {
+			this.shapeMenuOpen = false;
+			this.shapeMenuEl?.hide();
 		}
 	};
 
@@ -297,6 +315,32 @@ export class ConstellationsView extends ItemView {
 			if (this.galaxyMenuOpen) dropdownMenu.show();
 			else dropdownMenu.hide();
 		};
+		const shapeWrap = toolbar.createDiv({ cls: "ct-dropdown" });
+		const shapeBtn = shapeWrap.createEl("button", {
+			cls: "ct-btn",
+			text: `Форма: ${SHAPE_LABELS[this.shapeMode]}`,
+		});
+		const shapeMenu = shapeWrap.createDiv({ cls: "ct-dropdown-menu" });
+		shapeMenu.hide();
+		this.shapeMenuEl = shapeMenu;
+		for (const option of ["mixed" as const, ...CONSTELLATION_SHAPES]) {
+			const item = shapeMenu.createDiv({ cls: "ct-dropdown-item", text: SHAPE_LABELS[option] });
+			item.onclick = (ev) => {
+				ev.stopPropagation();
+				this.shapeMode = option;
+				shapeBtn.setText(`Форма: ${SHAPE_LABELS[option]}`);
+				this.shapeMenuOpen = false;
+				shapeMenu.hide();
+				this.rebuild();
+			};
+		}
+		shapeBtn.onclick = (ev) => {
+			ev.stopPropagation();
+			this.shapeMenuOpen = !this.shapeMenuOpen;
+			if (this.shapeMenuOpen) shapeMenu.show();
+			else shapeMenu.hide();
+		};
+
 		activeDocument.addEventListener("click", this.onDocumentClick);
 
 		const searchInput = toolbar.createEl("input", {
@@ -371,7 +415,7 @@ export class ConstellationsView extends ItemView {
 		this.clearGalaxy();
 
 		const universes = buildGalaxy(this.plugin.app);
-		layoutGalaxy(universes);
+		layoutGalaxy(universes, this.shapeMode === "mixed" ? undefined : this.shapeMode);
 		this.populateScene(universes);
 	}
 
@@ -1242,7 +1286,11 @@ export class ConstellationsView extends ItemView {
 		title.href = "#";
 		title.onclick = (e) => {
 			e.preventDefault();
-			void this.plugin.app.workspace.getLeaf(false).openFile(star.file);
+			// A plain getLeaf(false) would grab the *active* leaf — which, while
+			// this panel has focus, is this very Constellations view — and swap
+			// our 3D scene out in place instead of opening the note. Force a
+			// new tab so the panel stays put.
+			void this.plugin.app.workspace.getLeaf("tab").openFile(star.file);
 		};
 		const closeBtn = header.createEl("button", { cls: "ci-close", text: "×" });
 		closeBtn.onclick = () => panel.hide();
