@@ -1,5 +1,6 @@
 import { Plugin, WorkspaceLeaf } from "obsidian";
 import { ConstellationsView, VIEW_TYPE_CONSTELLATIONS } from "./src/view";
+import { ConstellationsSettingTab } from "./src/settings";
 
 export default class ConstellationsPlugin extends Plugin {
 	async onload(): Promise<void> {
@@ -7,6 +8,8 @@ export default class ConstellationsPlugin extends Plugin {
 			VIEW_TYPE_CONSTELLATIONS,
 			(leaf) => new ConstellationsView(leaf, this)
 		);
+
+		this.addSettingTab(new ConstellationsSettingTab(this.app, this));
 
 		this.addRibbonIcon("sparkles", "Open Constellations", () => {
 			void this.activateView();
