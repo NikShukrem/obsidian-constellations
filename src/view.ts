@@ -1034,56 +1034,50 @@ export class ConstellationsView extends ItemView {
 		this.lineMaterial = material;
 	}
 
-	/** "filament": a dim, gently curved static thread through the ring —
-	 * modeled on cosmic-web gas filaments bridging galaxies, not a crisp
-	 * geometric connector. No animation; it's meant to read as background
-	 * structure. */
+	/** "filament": a dim, gently curved static gas strand through the ring —
+	 * modeled on cosmic-web filaments bridging galaxies, not a crisp
+	 * geometric connector. Real volume (a soft outer tube plus a brighter
+	 * thin core), not a flat line — a flat line at this opacity read as a
+	 * faint scribble, not a glowing strand. No animation; meant to read as
+	 * background structure. */
 	private addFilamentConnections(universes: UniverseGroup[]): void {
 		if (!this.scene) return;
-		const positions: number[] = [];
-		const colors: number[] = [];
-		const lineColor = new THREE.Color();
-
 		for (const universe of universes) {
 			if (universe.connectionStyle !== "filament") continue;
 			for (const group of universe.constellations) {
 				if (group.ringStars.length < 2 || group.ringStars.length > MAX_CONSTELLATION_LINE_MEMBERS)
 					continue;
-				lineColor.setHSL(group.hue / 360, 0.5, 0.58);
 				const curve = new THREE.CatmullRomCurve3(
 					group.ringStars.map((s) => s.position.clone())
 				);
-				const sampleCount = Math.max(8, group.ringStars.length * 6);
-				const points = curve.getPoints(sampleCount);
-				for (let i = 0; i < points.length - 1; i++) {
-					const a = points[i];
-					const b = points[i + 1];
-					positions.push(a.x, a.y, a.z, b.x, b.y, b.z);
-					colors.push(
-						lineColor.r,
-						lineColor.g,
-						lineColor.b,
-						lineColor.r,
-						lineColor.g,
-						lineColor.b
-					);
-				}
+				const sampleCount = Math.max(16, group.ringStars.length * 8);
+				const color = new THREE.Color().setHSL(group.hue / 360, 0.65, 0.6);
+
+				const outerGeometry = new THREE.TubeGeometry(curve, sampleCount, 0.55, 6, false);
+				const outerMaterial = new THREE.MeshBasicMaterial({
+					color,
+					transparent: true,
+					opacity: 0.3,
+					depthWrite: false,
+					blending: THREE.AdditiveBlending,
+				});
+				const outer = new THREE.Mesh(outerGeometry, outerMaterial);
+				outer.userData.isGalaxyContent = true;
+				this.scene.add(outer);
+
+				const coreGeometry = new THREE.TubeGeometry(curve, sampleCount, 0.16, 5, false);
+				const coreMaterial = new THREE.MeshBasicMaterial({
+					color,
+					transparent: true,
+					opacity: 0.55,
+					depthWrite: false,
+					blending: THREE.AdditiveBlending,
+				});
+				const core = new THREE.Mesh(coreGeometry, coreMaterial);
+				core.userData.isGalaxyContent = true;
+				this.scene.add(core);
 			}
 		}
-		if (positions.length === 0) return;
-		const geometry = new THREE.BufferGeometry();
-		geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-		geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
-		const material = new THREE.LineBasicMaterial({
-			vertexColors: true,
-			transparent: true,
-			opacity: 0.22,
-			depthWrite: false,
-			blending: THREE.AdditiveBlending,
-		});
-		const lines = new THREE.LineSegments(geometry, material);
-		lines.userData.isGalaxyContent = true;
-		this.scene.add(lines);
 	}
 
 	/** "nebula": no per-pair connectors at all — the whole tag group shares

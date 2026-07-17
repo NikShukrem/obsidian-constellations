@@ -2,3 +2,5 @@ node_modules/
 main.js
 *.js.map
 .DS_Store
+devtools/render-test/bundle.js
+devtools/render-test/*.png
