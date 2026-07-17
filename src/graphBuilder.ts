@@ -1,8 +1,9 @@
 import { App, getAllTags, TFile } from "obsidian";
 import * as THREE from "three";
-import type { ConnectionStyle, ConstellationGroup, StarNode, UniverseGroup } from "./types";
+import type { ConstellationGroup, ConstellationShape, StarNode, ThreadStyle, UniverseGroup } from "./types";
 
-const CONNECTION_STYLES: ConnectionStyle[] = ["filament", "stream", "nebula"];
+const CONSTELLATION_SHAPES: ConstellationShape[] = ["ring", "arc", "cluster"];
+const THREAD_STYLES: ThreadStyle[] = ["filament", "stream"];
 
 const ROOT_UNIVERSE_NAME = "Root";
 export const DUST_HUE = 225;
@@ -72,7 +73,6 @@ export function buildGalaxy(app: App): UniverseGroup[] {
 				center: new THREE.Vector3(),
 				radius: 0,
 				alphaStar: null,
-				connectionStyle: CONNECTION_STYLES[hashHue(universeName) % CONNECTION_STYLES.length],
 			};
 			universeMap.set(universeName, universe);
 		}
@@ -104,8 +104,9 @@ export function buildGalaxy(app: App): UniverseGroup[] {
 		for (const [tag, stars] of byTag) {
 			if (stars.length < 2) continue;
 			const alphaStar = stars.reduce((a, b) => (b.weight > a.weight ? b : a));
+			const key = `${universe.name}::${tag}`;
 			const group: ConstellationGroup = {
-				key: `${universe.name}::${tag}`,
+				key,
 				tag,
 				universe: universe.name,
 				stars,
@@ -113,6 +114,8 @@ export function buildGalaxy(app: App): UniverseGroup[] {
 				hue: hashHue(tag),
 				alphaStar,
 				ringStars: [],
+				shape: CONSTELLATION_SHAPES[hashHue(key + "#shape") % CONSTELLATION_SHAPES.length],
+				threadStyle: THREAD_STYLES[hashHue(key + "#thread") % THREAD_STYLES.length],
 			};
 			universe.constellations.push(group);
 		}

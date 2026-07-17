@@ -16,6 +16,16 @@ export interface StarNode {
 	hue: number;
 }
 
+/** How a constellation's stars are arranged around its center. Varying this
+ * per group is what keeps a starfield from reading as identical concentric
+ * circles in every color. */
+export type ConstellationShape = "ring" | "arc" | "cluster";
+
+/** How a constellation's close-up connection renders once the camera is near
+ * enough for the enveloping cloud to have faded out. Assigned per group (not
+ * per universe) so a single universe shows a mix, not one style throughout. */
+export type ThreadStyle = "filament" | "stream";
+
 export interface ConstellationGroup {
 	key: string;
 	tag: string;
@@ -28,12 +38,12 @@ export interface ConstellationGroup {
 	alphaStar: StarNode | null;
 	/** Subset of `stars` actually drawn in this constellation's ring (each star
 	 * has exactly one "home" constellation even if it carries several tags).
-	 * Lines and the alpha-star anchor are derived from this, not `stars`, so
-	 * a note's other tags don't drag long crossing lines across the map. */
+	 * Threads and the alpha-star anchor are derived from this, not `stars`, so
+	 * a note's other tags don't drag long crossing connectors across the map. */
 	ringStars: StarNode[];
+	shape: ConstellationShape;
+	threadStyle: ThreadStyle;
 }
-
-export type ConnectionStyle = "filament" | "stream" | "nebula";
 
 export interface UniverseGroup {
 	name: string;
@@ -43,7 +53,4 @@ export interface UniverseGroup {
 	radius: number;
 	/** Heaviest star overall; the universe label is anchored next to it. */
 	alphaStar: StarNode | null;
-	/** How this universe's constellation connections render — deterministic
-	 * per universe name so it doesn't change on rebuild. See graphBuilder.ts. */
-	connectionStyle: ConnectionStyle;
 }

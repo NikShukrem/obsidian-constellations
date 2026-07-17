@@ -202,12 +202,28 @@ export function layoutGalaxy(universes: UniverseGroup[]): void {
 			// sitting flat on the world XZ plane — real constellations don't
 			// all share one orientation either.
 			const { u, v, normal } = randomPlaneBasis();
+			// Every constellation being a perfect ring reads as identical
+			// concentric circles once several are in frame together — vary how
+			// the ring itself is laid out per group.
 			stars.forEach((star, si) => {
-				const angle = (si / stars.length) * Math.PI * 2 + (Math.random() - 0.5) * 0.5;
-				// Heavier stars (more links/backlinks/tags) are gravitationally
-				// pulled toward the constellation's center; light stars drift outward.
 				const pull = normalizedWeight(star, minW, maxW);
-				const radius = ringRadius * (0.3 + 0.7 * (1 - pull));
+				let angle: number;
+				let radius: number;
+				if (group.shape === "arc") {
+					// An open arc, not a closed loop — roughly 200 degrees.
+					const arcSpan = Math.PI * 1.1;
+					const t = stars.length > 1 ? si / (stars.length - 1) : 0.5;
+					angle = -arcSpan / 2 + t * arcSpan + (Math.random() - 0.5) * 0.3;
+					radius = ringRadius * (0.3 + 0.7 * (1 - pull));
+				} else if (group.shape === "cluster") {
+					// No ring structure at all — a scattered blob, concentrated
+					// toward the center rather than evenly spaced on an edge.
+					angle = Math.random() * Math.PI * 2;
+					radius = ringRadius * Math.pow(Math.random(), 0.65) * (0.5 + 0.5 * (1 - pull));
+				} else {
+					angle = (si / stars.length) * Math.PI * 2 + (Math.random() - 0.5) * 0.5;
+					radius = ringRadius * (0.3 + 0.7 * (1 - pull));
+				}
 				const jitter = (Math.random() - 0.5) * ringRadius * 0.25;
 				const inPlane = radius + jitter;
 				const outOfPlane = (Math.random() - 0.5) * ringRadius * 0.12;

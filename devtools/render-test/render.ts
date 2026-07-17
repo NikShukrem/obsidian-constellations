@@ -59,6 +59,7 @@ const LINE_VERTEX_SHADER = /* glsl */ `
 const LINE_FRAGMENT_SHADER = /* glsl */ `
 	uniform float uTime;
 	uniform float uSpeed;
+	uniform float uFade;
 	varying vec3 vColor;
 	varying float vProgress;
 	varying float vPhase;
@@ -66,10 +67,24 @@ const LINE_FRAGMENT_SHADER = /* glsl */ `
 		float t = fract(uTime * uSpeed + vPhase);
 		float trailDist = fract(t - vProgress);
 		float glow = exp(-trailDist * trailDist * 45.0);
-		float alpha = 0.22 + glow * 1.6;
+		float alpha = (0.22 + glow * 1.6) * uFade;
 		gl_FragColor = vec4(vColor * alpha, alpha);
 	}
 `;
+
+interface ThreadMaterial {
+	material: THREE.ShaderMaterial | THREE.MeshBasicMaterial;
+	baseOpacity: number;
+}
+
+interface GroupVisual {
+	center: THREE.Vector3;
+	nearDistance: number;
+	farDistance: number;
+	cloud: THREE.Sprite;
+	cloudBaseOpacity: number;
+	threads: ThreadMaterial[];
+}
 
 function createGlowTexture(): THREE.Texture {
 	const size = 128;
@@ -231,120 +246,143 @@ async function main() {
 		});
 	}
 
-	// stream connections
+	// Per-constellation cloud + thread, mirroring src/view.ts: every group
+	// gets a soft volumetric glow sprite (visible from far away) plus its
+	// filament/stream thread geometry (visible up close), crossfaded by
+	// camera distance in updateGroupVisualFade below.
+	const groupVisuals: GroupVisual[] = [];
 	{
-		const positions: number[] = [];
-		const colors: number[] = [];
-		const progress: number[] = [];
-		const phases: number[] = [];
 		const lineColor = new THREE.Color();
-		for (const universe of universes) {
-			if (universe.connectionStyle !== "stream") continue;
-			for (const group of universe.constellations) {
-				if (group.ringStars.length < 2 || group.ringStars.length > MAX_CONSTELLATION_LINE_MEMBERS) continue;
-				lineColor.setHSL(group.hue / 360, 0.7, 0.65);
-				const groupPhase = Math.random();
-				const cumulative = [0];
-				for (let i = 1; i < group.ringStars.length; i++) {
-					cumulative.push(
-						cumulative[i - 1] + group.ringStars[i - 1].position.distanceTo(group.ringStars[i].position)
-					);
-				}
-				const totalLength = cumulative[cumulative.length - 1] || 1;
-				for (let i = 0; i < group.ringStars.length - 1; i++) {
-					const a = group.ringStars[i].position;
-					const b = group.ringStars[i + 1].position;
-					positions.push(a.x, a.y, a.z, b.x, b.y, b.z);
-					colors.push(lineColor.r, lineColor.g, lineColor.b, lineColor.r, lineColor.g, lineColor.b);
-					progress.push(cumulative[i] / totalLength, cumulative[i + 1] / totalLength);
-					phases.push(groupPhase, groupPhase);
-				}
-			}
-		}
-		if (positions.length > 0) {
-			const geometry = new THREE.BufferGeometry();
-			geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-			geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
-			geometry.setAttribute("aProgress", new THREE.Float32BufferAttribute(progress, 1));
-			geometry.setAttribute("aPhase", new THREE.Float32BufferAttribute(phases, 1));
-			const material = new THREE.ShaderMaterial({
-				uniforms: { uTime: { value: 0.4 }, uSpeed: { value: 0.055 } },
-				vertexShader: LINE_VERTEX_SHADER,
-				fragmentShader: LINE_FRAGMENT_SHADER,
-				transparent: true,
-				depthWrite: false,
-				blending: THREE.AdditiveBlending,
-			});
-			scene.add(new THREE.LineSegments(geometry, material));
-		}
-	}
-
-	// filament connections — real volume (tube), not a flat line, so it
-	// reads as a soft gas strand instead of a thin scribble.
-	{
-		for (const universe of universes) {
-			if (universe.connectionStyle !== "filament") continue;
-			for (const group of universe.constellations) {
-				if (group.ringStars.length < 2 || group.ringStars.length > MAX_CONSTELLATION_LINE_MEMBERS) continue;
-				const curve = new THREE.CatmullRomCurve3(group.ringStars.map((s) => s.position.clone()));
-				const sampleCount = Math.max(16, group.ringStars.length * 8);
-				const radius = 0.55;
-				const tubeGeometry = new THREE.TubeGeometry(curve, sampleCount, radius, 6, false);
-				const color = new THREE.Color().setHSL(group.hue / 360, 0.65, 0.6);
-				const material = new THREE.MeshBasicMaterial({
-					color,
-					transparent: true,
-					opacity: 0.3,
-					depthWrite: false,
-					blending: THREE.AdditiveBlending,
-				});
-				scene.add(new THREE.Mesh(tubeGeometry, material));
-
-				// A thin brighter core so it doesn't look like a uniform blob.
-				const coreGeometry = new THREE.TubeGeometry(curve, sampleCount, radius * 0.3, 5, false);
-				const coreMaterial = new THREE.MeshBasicMaterial({
-					color,
-					transparent: true,
-					opacity: 0.55,
-					depthWrite: false,
-					blending: THREE.AdditiveBlending,
-				});
-				scene.add(new THREE.Mesh(coreGeometry, coreMaterial));
-			}
-		}
-	}
-
-	// nebula clouds (nebula-style groups + oversized fallback)
-	{
 		for (const universe of universes) {
 			for (const group of universe.constellations) {
 				if (group.ringStars.length < 2) continue;
-				const isOversized = group.ringStars.length > MAX_CONSTELLATION_LINE_MEMBERS;
-				if (universe.connectionStyle !== "nebula" && !isOversized) continue;
 				let spanRadius = 0;
 				for (const star of group.ringStars) {
 					spanRadius = Math.max(spanRadius, group.center.distanceTo(star.position));
 				}
 				if (spanRadius === 0) continue;
-				const color = new THREE.Color().setHSL(group.hue / 360, 0.6, 0.55);
-				const material = new THREE.SpriteMaterial({
+
+				const cloudColor = new THREE.Color().setHSL(group.hue / 360, 0.6, 0.55);
+				const cloudMaterial = new THREE.SpriteMaterial({
 					map: glowTexture,
-					color,
+					color: cloudColor,
 					transparent: true,
-					opacity: 0.16,
+					opacity: 0.24,
 					blending: THREE.AdditiveBlending,
 					depthWrite: false,
 				});
-				const sprite = new THREE.Sprite(material);
-				sprite.position.copy(group.center);
-				const scale = Math.min(spanRadius * 2.6, 130);
-				sprite.scale.set(scale, scale, 1);
-				scene.add(sprite);
+				const cloud = new THREE.Sprite(cloudMaterial);
+				cloud.position.copy(group.center);
+				const cloudScale = Math.min(spanRadius * 2.6, 130);
+				cloud.scale.set(cloudScale, cloudScale, 1);
+				scene.add(cloud);
+
+				const threads: ThreadMaterial[] = [];
+				if (group.ringStars.length <= MAX_CONSTELLATION_LINE_MEMBERS) {
+					if (group.threadStyle === "stream") {
+						const positions: number[] = [];
+						const colors: number[] = [];
+						const progress: number[] = [];
+						const phases: number[] = [];
+						lineColor.setHSL(group.hue / 360, 0.7, 0.65);
+						const groupPhase = Math.random();
+						const cumulative = [0];
+						for (let i = 1; i < group.ringStars.length; i++) {
+							cumulative.push(
+								cumulative[i - 1] +
+									group.ringStars[i - 1].position.distanceTo(group.ringStars[i].position)
+							);
+						}
+						const totalLength = cumulative[cumulative.length - 1] || 1;
+						for (let i = 0; i < group.ringStars.length - 1; i++) {
+							const a = group.ringStars[i].position;
+							const b = group.ringStars[i + 1].position;
+							positions.push(a.x, a.y, a.z, b.x, b.y, b.z);
+							colors.push(lineColor.r, lineColor.g, lineColor.b, lineColor.r, lineColor.g, lineColor.b);
+							progress.push(cumulative[i] / totalLength, cumulative[i + 1] / totalLength);
+							phases.push(groupPhase, groupPhase);
+						}
+						if (positions.length > 0) {
+							const geometry = new THREE.BufferGeometry();
+							geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+							geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+							geometry.setAttribute("aProgress", new THREE.Float32BufferAttribute(progress, 1));
+							geometry.setAttribute("aPhase", new THREE.Float32BufferAttribute(phases, 1));
+							const material = new THREE.ShaderMaterial({
+								uniforms: { uTime: { value: 0.4 }, uSpeed: { value: 0.055 }, uFade: { value: 0 } },
+								vertexShader: LINE_VERTEX_SHADER,
+								fragmentShader: LINE_FRAGMENT_SHADER,
+								transparent: true,
+								depthWrite: false,
+								blending: THREE.AdditiveBlending,
+							});
+							scene.add(new THREE.LineSegments(geometry, material));
+							threads.push({ material, baseOpacity: 1 });
+						}
+					} else {
+						// filament — real volume (tube), not a flat line, so it
+						// reads as a soft gas strand instead of a thin scribble.
+						const curve = new THREE.CatmullRomCurve3(group.ringStars.map((s) => s.position.clone()));
+						const sampleCount = Math.max(16, group.ringStars.length * 8);
+						const radius = 0.55;
+						const color = new THREE.Color().setHSL(group.hue / 360, 0.65, 0.6);
+
+						const tubeGeometry = new THREE.TubeGeometry(curve, sampleCount, radius, 6, false);
+						const outerMaterial = new THREE.MeshBasicMaterial({
+							color,
+							transparent: true,
+							opacity: 0,
+							depthWrite: false,
+							blending: THREE.AdditiveBlending,
+						});
+						scene.add(new THREE.Mesh(tubeGeometry, outerMaterial));
+						threads.push({ material: outerMaterial, baseOpacity: 0.3 });
+
+						// A thin brighter core so it doesn't look like a uniform blob.
+						const coreGeometry = new THREE.TubeGeometry(curve, sampleCount, radius * 0.3, 5, false);
+						const coreMaterial = new THREE.MeshBasicMaterial({
+							color,
+							transparent: true,
+							opacity: 0,
+							depthWrite: false,
+							blending: THREE.AdditiveBlending,
+						});
+						scene.add(new THREE.Mesh(coreGeometry, coreMaterial));
+						threads.push({ material: coreMaterial, baseOpacity: 0.55 });
+					}
+				}
+
+				groupVisuals.push({
+					center: group.center,
+					nearDistance: spanRadius * 1.6,
+					farDistance: spanRadius * 4.5,
+					cloud,
+					cloudBaseOpacity: 0.24,
+					threads,
+				});
+			}
+		}
+	}
+
+	function updateGroupVisualFade(cameraPos: THREE.Vector3) {
+		for (const visual of groupVisuals) {
+			const distance = cameraPos.distanceTo(visual.center);
+			const span = Math.max(1, visual.farDistance - visual.nearDistance);
+			const farFactor = THREE.MathUtils.clamp((distance - visual.nearDistance) / span, 0, 1);
+			(visual.cloud.material as THREE.SpriteMaterial).opacity = visual.cloudBaseOpacity * farFactor;
+			const nearFactor = 1 - farFactor;
+			for (const { material, baseOpacity } of visual.threads) {
+				if (material instanceof THREE.ShaderMaterial) {
+					material.uniforms.uFade.value = baseOpacity * nearFactor;
+				} else {
+					material.opacity = baseOpacity * nearFactor;
+				}
 			}
 		}
 	}
 
 	function render() {
+		updateGroupVisualFade(camera.position);
 		composer.render();
 	}
 
@@ -361,6 +399,25 @@ async function main() {
 		render();
 	}
 
+	/** Frames a single constellation group up close so the thread geometry
+	 * (which only shows once the camera has crossed inside nearDistance) is
+	 * actually visible — frameUniverse alone can't verify the crossfade. */
+	function frameGroup(universeName: string, tag: string, distanceMul = 0.55) {
+		const universe = universes.find((u) => u.name === universeName);
+		const group = universe?.constellations.find((g) => g.tag === tag);
+		if (!group) return;
+		const visual = groupVisuals.find((v) => v.center === group.center);
+		const nearDist = visual ? visual.nearDistance : 15;
+		const dist = Math.max(nearDist * distanceMul, 4);
+		camera.position.set(
+			group.center.x + dist * 0.6,
+			group.center.y + dist * 0.4,
+			group.center.z + dist
+		);
+		camera.lookAt(group.center);
+		render();
+	}
+
 	function frameAll() {
 		let maxDist = 0;
 		for (const u of universes) maxDist = Math.max(maxDist, u.center.length() + u.radius);
@@ -369,8 +426,15 @@ async function main() {
 		render();
 	}
 
-	(window as unknown as { __frameUniverse: typeof frameUniverse; __frameAll: typeof frameAll; __universes: UniverseGroup[] }).__frameUniverse =
-		frameUniverse;
+	(
+		window as unknown as {
+			__frameUniverse: typeof frameUniverse;
+			__frameGroup: typeof frameGroup;
+			__frameAll: typeof frameAll;
+			__universes: UniverseGroup[];
+		}
+	).__frameUniverse = frameUniverse;
+	(window as unknown as { __frameGroup: typeof frameGroup }).__frameGroup = frameGroup;
 	(window as unknown as { __frameAll: typeof frameAll }).__frameAll = frameAll;
 	(window as unknown as { __universes: UniverseGroup[] }).__universes = universes;
 

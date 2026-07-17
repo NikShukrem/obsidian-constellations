@@ -1,5 +1,11 @@
 import * as THREE from "three";
-import type { ConnectionStyle, ConstellationGroup, StarNode, UniverseGroup } from "../../src/types";
+import type {
+	ConstellationGroup,
+	ConstellationShape,
+	StarNode,
+	ThreadStyle,
+	UniverseGroup,
+} from "../../src/types";
 
 function fakeFile(path: string) {
 	const slash = path.lastIndexOf("/");
@@ -21,21 +27,29 @@ function makeStar(id: string, universe: string, weight: number, tags: string[]):
 	};
 }
 
-function buildUniverse(
-	name: string,
-	connectionStyle: ConnectionStyle,
-	groupSizes: number[],
-	looseCount: number
-): UniverseGroup {
+interface GroupSpec {
+	size: number;
+	shape?: ConstellationShape;
+	threadStyle?: ThreadStyle;
+}
+
+function buildUniverse(name: string, groups: GroupSpec[], looseCount: number): UniverseGroup {
 	const stars: StarNode[] = [];
 	const constellations: ConstellationGroup[] = [];
+	const shapes: ConstellationShape[] = ["ring", "arc", "cluster"];
+	const threadStyles: ThreadStyle[] = ["filament", "stream"];
 	let counter = 0;
 
-	groupSizes.forEach((size, gi) => {
+	groups.forEach((spec, gi) => {
 		const tag = `tag${gi}`;
 		const groupStars: StarNode[] = [];
-		for (let i = 0; i < size; i++) {
-			const star = makeStar(`${name}/${tag}-${i}-${counter++}.md`, name, 1 + Math.random() * 10, [tag]);
+		for (let i = 0; i < spec.size; i++) {
+			const star = makeStar(
+				`${name}/${tag}-${i}-${counter++}.md`,
+				name,
+				1 + Math.random() * 10,
+				[tag]
+			);
 			stars.push(star);
 			groupStars.push(star);
 		}
@@ -49,6 +63,8 @@ function buildUniverse(
 			hue: (gi * 67) % 360,
 			alphaStar,
 			ringStars: [],
+			shape: spec.shape ?? shapes[gi % shapes.length],
+			threadStyle: spec.threadStyle ?? threadStyles[gi % threadStyles.length],
 		});
 	});
 
@@ -63,24 +79,36 @@ function buildUniverse(
 		center: new THREE.Vector3(),
 		radius: 0,
 		alphaStar: stars.length ? stars.reduce((a, b) => (b.weight > a.weight ? b : a)) : null,
-		connectionStyle,
 	};
 }
 
 /** Mirrors the shape of a real vault with folder-tag extraction: a mix of
  * small clean tag groups and a few oversized ones (60-80 members) that must
- * fall back to a cloud instead of a line. One universe forced per style so
- * each is inspectable on its own, plus a stress universe with huge groups. */
+ * fall back to a cloud-only look, plus every shape/thread-style combo forced
+ * once each so they're all individually inspectable. */
 export function buildMockGalaxy(): UniverseGroup[] {
 	return [
-		buildUniverse("StreamDemo", "stream", [4, 6, 8, 3, 5], 20),
-		buildUniverse("FilamentDemo", "filament", [5, 7, 4, 9], 25),
-		buildUniverse("NebulaDemo", "nebula", [6, 10, 4], 30),
-		buildUniverse("BigFolderTags", "stream", [60, 80, 25, 6, 4], 40),
-		buildUniverse("SmallOne", "filament", [3], 5),
+		buildUniverse(
+			"ShapeDemo",
+			[
+				{ size: 8, shape: "ring", threadStyle: "stream" },
+				{ size: 8, shape: "arc", threadStyle: "filament" },
+				{ size: 10, shape: "cluster", threadStyle: "stream" },
+			],
+			15
+		),
+		buildUniverse("MixedDemo", [
+			{ size: 6 }, { size: 9 }, { size: 5 }, { size: 11 }, { size: 7 },
+		], 25),
+		buildUniverse(
+			"BigFolderTags",
+			[{ size: 60 }, { size: 80 }, { size: 25 }, { size: 6 }, { size: 4 }],
+			40
+		),
+		buildUniverse("SmallOne", [{ size: 3, shape: "arc", threadStyle: "filament" }], 5),
 		// Stress test: mirrors the real "04-Архивные-файлы" folder-tag group
 		// (1200+ notes sharing one tag) that used to balloon the whole
 		// universe's scale and wash out the screen with an oversized cloud.
-		buildUniverse("MegaFolderTag", "stream", [1243, 8, 5], 20),
+		buildUniverse("MegaFolderTag", [{ size: 1243 }, { size: 8 }, { size: 5 }], 20),
 	];
 }

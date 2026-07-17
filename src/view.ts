@@ -141,6 +141,7 @@ const LINE_VERTEX_SHADER = /* glsl */ `
 const LINE_FRAGMENT_SHADER = /* glsl */ `
 	uniform float uTime;
 	uniform float uSpeed;
+	uniform float uFade;
 	varying vec3 vColor;
 	varying float vProgress;
 	varying float vPhase;
@@ -149,7 +150,7 @@ const LINE_FRAGMENT_SHADER = /* glsl */ `
 		float t = fract(uTime * uSpeed + vPhase);
 		float trailDist = fract(t - vProgress);
 		float glow = exp(-trailDist * trailDist * 45.0);
-		float alpha = 0.22 + glow * 1.6;
+		float alpha = (0.22 + glow * 1.6) * uFade;
 		gl_FragColor = vec4(vColor * alpha, alpha);
 	}
 `;
@@ -184,6 +185,24 @@ interface Flash {
 	maxScale: number;
 }
 
+/** From far away a constellation is just a soft glowing cloud; get close
+ * enough and the cloud fades out while the actual thread between its stars
+ * (filament or stream, per group.threadStyle) fades in. Both halves share
+ * this one distance-driven crossfade, computed every frame in animate(). */
+interface ThreadMaterial {
+	material: THREE.ShaderMaterial | THREE.MeshBasicMaterial;
+	baseOpacity: number;
+}
+
+interface GroupVisual {
+	center: THREE.Vector3;
+	nearDistance: number;
+	farDistance: number;
+	cloud: THREE.Sprite;
+	cloudBaseOpacity: number;
+	threads: ThreadMaterial[];
+}
+
 function easeInOutCubic(t: number): number {
 	return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 }
@@ -214,7 +233,7 @@ export class ConstellationsView extends ItemView {
 	private starTexture: THREE.Texture | null = null;
 	private starLayers: THREE.Points[] = [];
 	private starMaterials: THREE.ShaderMaterial[] = [];
-	private lineMaterial: THREE.ShaderMaterial | null = null;
+	private groupVisuals: GroupVisual[] = [];
 	private starsByLayer: StarNode[][] = [];
 	private starIndex = new Map<string, { layer: number; vertexIndex: number }>();
 	private searchQuery = "";
@@ -689,7 +708,7 @@ export class ConstellationsView extends ItemView {
 		this.quasarJetMaterials = [];
 		this.activeFlashes = [];
 		this.nebulae = [];
-		this.lineMaterial = null;
+		this.groupVisuals = [];
 	}
 
 	private populateScene(universes: UniverseGroup[]): void {
@@ -958,62 +977,107 @@ export class ConstellationsView extends ItemView {
 	/** Three ways a universe can render its tag connections, assigned
 	 * deterministically per universe in graphBuilder.ts so you get variety
 	 * across the galaxy instead of one style everywhere. */
+	/** Every constellation always has a cloud (the far-away silhouette) and,
+	 * if it's small enough, a thread (the close-up detail) — which one you
+	 * see is a distance-based crossfade updated per frame in animate(), not
+	 * a fixed per-universe style. See GroupVisual. */
 	private addConstellationLines(universes: UniverseGroup[]): void {
-		this.addStreamConnections(universes);
-		this.addFilamentConnections(universes);
-		this.addConstellationClouds(universes);
+		if (!this.scene || !this.glowTexture) return;
+		for (const universe of universes) {
+			for (const group of universe.constellations) {
+				if (group.ringStars.length < 2) continue;
+
+				let spanRadius = 0;
+				for (const star of group.ringStars) {
+					spanRadius = Math.max(spanRadius, group.center.distanceTo(star.position));
+				}
+				if (spanRadius === 0) continue;
+
+				const cloud = this.addConstellationCloud(group, spanRadius);
+				const threads =
+					group.ringStars.length <= MAX_CONSTELLATION_LINE_MEMBERS
+						? this.addConstellationThread(group)
+						: [];
+
+				this.groupVisuals.push({
+					center: group.center,
+					// Scaled off the group's own size, so a tight little
+					// constellation and a sprawling one each crossfade at a
+					// distance proportional to themselves.
+					nearDistance: spanRadius * 1.6,
+					farDistance: spanRadius * 4.5,
+					cloud,
+					cloudBaseOpacity: 0.24,
+					threads,
+				});
+			}
+		}
 	}
 
-	/** "stream": the original look — a bright point runs along each
-	 * constellation's path leaving a fading comet-tail, base line never
-	 * fully off. Like debris trailing between colliding galaxies. */
-	private addStreamConnections(universes: UniverseGroup[]): void {
-		if (!this.scene) return;
+	/** The far-away silhouette — every constellation gets exactly one of
+	 * these, modeled on the reflection nebula wrapped around the Pleiades. */
+	private addConstellationCloud(group: ConstellationGroup, spanRadius: number): THREE.Sprite {
+		const color = new THREE.Color().setHSL(group.hue / 360, 0.6, 0.55);
+		const material = new THREE.SpriteMaterial({
+			map: this.glowTexture,
+			color,
+			transparent: true,
+			opacity: 0.24,
+			blending: THREE.AdditiveBlending,
+			depthWrite: false,
+		});
+		const sprite = new THREE.Sprite(material);
+		sprite.position.copy(group.center);
+		// Capped defensively — layout.ts already bounds how far a huge
+		// group's stars can spread, but this keeps a runaway spanRadius from
+		// ever washing out the whole screen.
+		const scale = Math.min(spanRadius * 2.6, 130);
+		sprite.scale.set(scale, scale, 1);
+		sprite.userData.isGalaxyContent = true;
+		this.scene!.add(sprite);
+		return sprite;
+	}
+
+	/** The close-up detail, per group.threadStyle. Returns each material
+	 * paired with its intended full-brightness opacity, so the per-frame
+	 * crossfade has something to scale down instead of guessing. */
+	private addConstellationThread(group: ConstellationGroup): ThreadMaterial[] {
+		return group.threadStyle === "filament"
+			? this.addFilamentThread(group)
+			: this.addStreamThread(group);
+	}
+
+	/** "stream": a bright point runs along the constellation's path leaving
+	 * a fading comet-tail, base line never fully off (up to uFade). Like
+	 * debris trailing between colliding galaxies. */
+	private addStreamThread(group: ConstellationGroup): ThreadMaterial[] {
+		if (!this.scene) return [];
 		const positions: number[] = [];
 		const colors: number[] = [];
 		const progress: number[] = [];
 		const phases: number[] = [];
-		const lineColor = new THREE.Color();
+		const lineColor = new THREE.Color().setHSL(group.hue / 360, 0.7, 0.65);
+		const groupPhase = Math.random();
 
-		for (const universe of universes) {
-			if (universe.connectionStyle !== "stream") continue;
-			for (const group of universe.constellations) {
-				if (group.ringStars.length < 2 || group.ringStars.length > MAX_CONSTELLATION_LINE_MEMBERS)
-					continue;
-				lineColor.setHSL(group.hue / 360, 0.7, 0.65);
-				const groupPhase = Math.random();
-
-				const cumulative = [0];
-				for (let i = 1; i < group.ringStars.length; i++) {
-					cumulative.push(
-						cumulative[i - 1] + group.ringStars[i - 1].position.distanceTo(group.ringStars[i].position)
-					);
-				}
-				const totalLength = cumulative[cumulative.length - 1] || 1;
-
-				for (let i = 0; i < group.ringStars.length - 1; i++) {
-					const a = group.ringStars[i].position;
-					const b = group.ringStars[i + 1].position;
-					positions.push(a.x, a.y, a.z, b.x, b.y, b.z);
-					colors.push(
-						lineColor.r,
-						lineColor.g,
-						lineColor.b,
-						lineColor.r,
-						lineColor.g,
-						lineColor.b
-					);
-					progress.push(cumulative[i] / totalLength, cumulative[i + 1] / totalLength);
-					phases.push(groupPhase, groupPhase);
-				}
-			}
+		const cumulative = [0];
+		for (let i = 1; i < group.ringStars.length; i++) {
+			cumulative.push(
+				cumulative[i - 1] + group.ringStars[i - 1].position.distanceTo(group.ringStars[i].position)
+			);
 		}
-		if (positions.length === 0) return;
+		const totalLength = cumulative[cumulative.length - 1] || 1;
+
+		for (let i = 0; i < group.ringStars.length - 1; i++) {
+			const a = group.ringStars[i].position;
+			const b = group.ringStars[i + 1].position;
+			positions.push(a.x, a.y, a.z, b.x, b.y, b.z);
+			colors.push(lineColor.r, lineColor.g, lineColor.b, lineColor.r, lineColor.g, lineColor.b);
+			progress.push(cumulative[i] / totalLength, cumulative[i + 1] / totalLength);
+			phases.push(groupPhase, groupPhase);
+		}
+
 		const geometry = new THREE.BufferGeometry();
-		geometry.setAttribute(
-			"position",
-			new THREE.Float32BufferAttribute(positions, 3)
-		);
+		geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
 		geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
 		geometry.setAttribute("aProgress", new THREE.Float32BufferAttribute(progress, 1));
 		geometry.setAttribute("aPhase", new THREE.Float32BufferAttribute(phases, 1));
@@ -1021,6 +1085,7 @@ export class ConstellationsView extends ItemView {
 			uniforms: {
 				uTime: { value: 0 },
 				uSpeed: { value: 0.055 },
+				uFade: { value: 0 },
 			},
 			vertexShader: LINE_VERTEX_SHADER,
 			fragmentShader: LINE_FRAGMENT_SHADER,
@@ -1031,93 +1096,73 @@ export class ConstellationsView extends ItemView {
 		const lines = new THREE.LineSegments(geometry, material);
 		lines.userData.isGalaxyContent = true;
 		this.scene.add(lines);
-		this.lineMaterial = material;
+		// The shader already bakes its own glow curve into alpha; uFade is a
+		// plain 0-1 multiplier, so "full brightness" is just 1.
+		return [{ material, baseOpacity: 1 }];
 	}
 
-	/** "filament": a dim, gently curved static gas strand through the ring —
+	/** "filament": a dim, gently curved gas strand through the ring —
 	 * modeled on cosmic-web filaments bridging galaxies, not a crisp
 	 * geometric connector. Real volume (a soft outer tube plus a brighter
 	 * thin core), not a flat line — a flat line at this opacity read as a
-	 * faint scribble, not a glowing strand. No animation; meant to read as
-	 * background structure. */
-	private addFilamentConnections(universes: UniverseGroup[]): void {
-		if (!this.scene) return;
-		for (const universe of universes) {
-			if (universe.connectionStyle !== "filament") continue;
-			for (const group of universe.constellations) {
-				if (group.ringStars.length < 2 || group.ringStars.length > MAX_CONSTELLATION_LINE_MEMBERS)
-					continue;
-				const curve = new THREE.CatmullRomCurve3(
-					group.ringStars.map((s) => s.position.clone())
-				);
-				const sampleCount = Math.max(16, group.ringStars.length * 8);
-				const color = new THREE.Color().setHSL(group.hue / 360, 0.65, 0.6);
+	 * faint scribble, not a glowing strand. */
+	private addFilamentThread(group: ConstellationGroup): ThreadMaterial[] {
+		if (!this.scene) return [];
+		const curve = new THREE.CatmullRomCurve3(group.ringStars.map((s) => s.position.clone()));
+		const sampleCount = Math.max(16, group.ringStars.length * 8);
+		const color = new THREE.Color().setHSL(group.hue / 360, 0.65, 0.6);
 
-				const outerGeometry = new THREE.TubeGeometry(curve, sampleCount, 0.55, 6, false);
-				const outerMaterial = new THREE.MeshBasicMaterial({
-					color,
-					transparent: true,
-					opacity: 0.3,
-					depthWrite: false,
-					blending: THREE.AdditiveBlending,
-				});
-				const outer = new THREE.Mesh(outerGeometry, outerMaterial);
-				outer.userData.isGalaxyContent = true;
-				this.scene.add(outer);
+		const outerGeometry = new THREE.TubeGeometry(curve, sampleCount, 0.55, 6, false);
+		const outerMaterial = new THREE.MeshBasicMaterial({
+			color,
+			transparent: true,
+			opacity: 0,
+			depthWrite: false,
+			blending: THREE.AdditiveBlending,
+		});
+		const outer = new THREE.Mesh(outerGeometry, outerMaterial);
+		outer.userData.isGalaxyContent = true;
+		this.scene.add(outer);
 
-				const coreGeometry = new THREE.TubeGeometry(curve, sampleCount, 0.16, 5, false);
-				const coreMaterial = new THREE.MeshBasicMaterial({
-					color,
-					transparent: true,
-					opacity: 0.55,
-					depthWrite: false,
-					blending: THREE.AdditiveBlending,
-				});
-				const core = new THREE.Mesh(coreGeometry, coreMaterial);
-				core.userData.isGalaxyContent = true;
-				this.scene.add(core);
-			}
-		}
+		const coreGeometry = new THREE.TubeGeometry(curve, sampleCount, 0.16, 5, false);
+		const coreMaterial = new THREE.MeshBasicMaterial({
+			color,
+			transparent: true,
+			opacity: 0,
+			depthWrite: false,
+			blending: THREE.AdditiveBlending,
+		});
+		const core = new THREE.Mesh(coreGeometry, coreMaterial);
+		core.userData.isGalaxyContent = true;
+		this.scene.add(core);
+
+		return [
+			{ material: outerMaterial, baseOpacity: 0.3 },
+			{ material: coreMaterial, baseOpacity: 0.55 },
+		];
 	}
 
-	/** "nebula": no per-pair connectors at all — the whole tag group shares
-	 * one soft translucent cloud, like the reflection nebula wrapped around
-	 * the Pleiades. Size follows how far the group's stars actually spread.
-	 * Also the fallback for any oversized group in a stream/filament
-	 * universe — those styles cap out at MAX_CONSTELLATION_LINE_MEMBERS and
-	 * used to just skip bigger groups entirely, leaving bare rings of dots
-	 * with no connector at all. Now they get a cloud instead, so every
-	 * constellation renders as *something*. */
-	private addConstellationClouds(universes: UniverseGroup[]): void {
-		if (!this.scene || !this.glowTexture) return;
-		for (const universe of universes) {
-			for (const group of universe.constellations) {
-				if (group.ringStars.length < 2) continue;
-				const isOversizedForLines = group.ringStars.length > MAX_CONSTELLATION_LINE_MEMBERS;
-				if (universe.connectionStyle !== "nebula" && !isOversizedForLines) continue;
-				let spanRadius = 0;
-				for (const star of group.ringStars) {
-					spanRadius = Math.max(spanRadius, group.center.distanceTo(star.position));
+	/** Per-frame crossfade: cloud fades in past farDistance, thread fades in
+	 * once inside nearDistance, with a linear blend across the gap between. */
+	private updateGroupVisualFade(cameraPos: THREE.Vector3): void {
+		for (const visual of this.groupVisuals) {
+			const distance = cameraPos.distanceTo(visual.center);
+			const span = Math.max(1, visual.farDistance - visual.nearDistance);
+			const farFactor = THREE.MathUtils.clamp(
+				(distance - visual.nearDistance) / span,
+				0,
+				1
+			);
+			(visual.cloud.material as THREE.SpriteMaterial).opacity =
+				visual.cloudBaseOpacity * farFactor;
+
+			const nearFactor = 1 - farFactor;
+			for (const { material, baseOpacity } of visual.threads) {
+				if (material instanceof THREE.ShaderMaterial) {
+					material.uniforms.uFade.value = baseOpacity * nearFactor;
+				} else {
+					material.opacity = baseOpacity * nearFactor;
 				}
-				if (spanRadius === 0) continue;
-				const color = new THREE.Color().setHSL(group.hue / 360, 0.6, 0.55);
-				const material = new THREE.SpriteMaterial({
-					map: this.glowTexture,
-					color,
-					transparent: true,
-					opacity: 0.16,
-					blending: THREE.AdditiveBlending,
-					depthWrite: false,
-				});
-				const sprite = new THREE.Sprite(material);
-				sprite.position.copy(group.center);
-				// Capped defensively — layout.ts already bounds how far a huge
-				// group's stars can spread, but this keeps a runaway spanRadius
-				// from ever washing out the whole screen the way it used to.
-				const scale = Math.min(spanRadius * 2.6, 130);
-				sprite.scale.set(scale, scale, 1);
-				sprite.userData.isGalaxyContent = true;
-				this.scene.add(sprite);
 			}
 		}
 	}
@@ -1520,7 +1565,11 @@ export class ConstellationsView extends ItemView {
 
 		for (const material of this.starMaterials) material.uniforms.uTime.value = time / 1000;
 		for (const material of this.quasarJetMaterials) material.uniforms.uTime.value = time / 1000;
-		if (this.lineMaterial) this.lineMaterial.uniforms.uTime.value = time / 1000;
+		for (const visual of this.groupVisuals) {
+			for (const { material } of visual.threads) {
+				if (material instanceof THREE.ShaderMaterial) material.uniforms.uTime.value = time / 1000;
+			}
+		}
 		this.updateComets(time);
 		this.updateFlashes(time);
 
@@ -1531,7 +1580,10 @@ export class ConstellationsView extends ItemView {
 		}
 
 		this.controls?.update();
-		if (this.camera) this.updateNebulae(this.camera.position);
+		if (this.camera) {
+			this.updateNebulae(this.camera.position);
+			this.updateGroupVisualFade(this.camera.position);
+		}
 		this.updateLabelVisibility();
 		if (this.scene && this.camera) {
 			if (this.composer) this.composer.render();

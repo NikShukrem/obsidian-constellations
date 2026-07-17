@@ -49,5 +49,30 @@ for (const name of universeNames) {
 	await shootWithRetry(page, path.join(outDir, `universe-${name}.png`));
 }
 
+// Near/far shots of individual groups so the cloud<->thread crossfade
+// (cloud visible far away, threads visible up close) can be verified
+// visually instead of just trusting the interpolation math.
+const groupShots = [
+	{ universe: "ShapeDemo", tag: "tag0" },
+	{ universe: "ShapeDemo", tag: "tag1" },
+	{ universe: "ShapeDemo", tag: "tag2" },
+];
+for (const { universe, tag } of groupShots) {
+	await page.evaluate(({ universe, tag }) => window.__frameGroup(universe, tag, 3.5), { universe, tag });
+	await page.waitForTimeout(300);
+	await shootWithRetry(page, path.join(outDir, `group-${universe}-${tag}-far.png`));
+
+	await page.evaluate(({ universe, tag }) => window.__frameGroup(universe, tag, 0.85), { universe, tag });
+	await page.waitForTimeout(300);
+	await shootWithRetry(page, path.join(outDir, `group-${universe}-${tag}-near.png`));
+}
+
 await browser.close();
-console.log("Done:", ["overview.png", ...universeNames.map((n) => `universe-${n}.png`)].join(", "));
+console.log(
+	"Done:",
+	[
+		"overview.png",
+		...universeNames.map((n) => `universe-${n}.png`),
+		...groupShots.flatMap(({ universe, tag }) => [`group-${universe}-${tag}-far.png`, `group-${universe}-${tag}-near.png`]),
+	].join(", ")
+);
