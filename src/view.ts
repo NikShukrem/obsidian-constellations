@@ -1088,13 +1088,19 @@ export class ConstellationsView extends ItemView {
 
 	/** "nebula": no per-pair connectors at all — the whole tag group shares
 	 * one soft translucent cloud, like the reflection nebula wrapped around
-	 * the Pleiades. Size follows how far the group's stars actually spread. */
+	 * the Pleiades. Size follows how far the group's stars actually spread.
+	 * Also the fallback for any oversized group in a stream/filament
+	 * universe — those styles cap out at MAX_CONSTELLATION_LINE_MEMBERS and
+	 * used to just skip bigger groups entirely, leaving bare rings of dots
+	 * with no connector at all. Now they get a cloud instead, so every
+	 * constellation renders as *something*. */
 	private addConstellationClouds(universes: UniverseGroup[]): void {
 		if (!this.scene || !this.glowTexture) return;
 		for (const universe of universes) {
-			if (universe.connectionStyle !== "nebula") continue;
 			for (const group of universe.constellations) {
 				if (group.ringStars.length < 2) continue;
+				const isOversizedForLines = group.ringStars.length > MAX_CONSTELLATION_LINE_MEMBERS;
+				if (universe.connectionStyle !== "nebula" && !isOversizedForLines) continue;
 				let spanRadius = 0;
 				for (const star of group.ringStars) {
 					spanRadius = Math.max(spanRadius, group.center.distanceTo(star.position));
