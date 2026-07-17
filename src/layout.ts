@@ -323,9 +323,14 @@ function layoutGalaxyPlanetary(universe: UniverseGroup): void {
 export function layoutGalaxy(universes: UniverseGroup[], forcedShape?: ConstellationShape): void {
 	universes.sort((a, b) => b.stars.length - a.stars.length);
 
-	const universeFootprints = universes.map(
-		(u) => 20 + Math.sqrt(u.stars.length) * 7.5 + u.constellations.length * 5
-	);
+	// Planetary universes get 10x the footprint: their stars are spread by
+	// orbit radius (scaled off this same number), and packing hundreds of
+	// orbiting notes into the same footprint a regular constellation-shape
+	// universe would use is what overexposed them into a solid ball.
+	const universeFootprints = universes.map((u) => {
+		const base = 20 + Math.sqrt(u.stars.length) * 7.5 + u.constellations.length * 5;
+		return u.isPlanetary ? base * 10 : base;
+	});
 	const universeSpacing = Math.max(...universeFootprints, 1) * 2.6;
 
 	universes.forEach((universe, i) => {
