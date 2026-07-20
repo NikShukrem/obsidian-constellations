@@ -45,8 +45,6 @@ export class ConstellationsSettingTab extends PluginSettingTab {
 		const { containerEl } = this;
 		containerEl.empty();
 
-		new Setting(containerEl).setName("Constellations").setHeading();
-
 		new Setting(containerEl)
 			.setName("Installed version")
 			.setDesc(`v${this.plugin.manifest.version}`);
@@ -59,7 +57,7 @@ export class ConstellationsSettingTab extends PluginSettingTab {
 			.addButton((button) => {
 				button
 					.setButtonText(`Roll back to v${FIRST_PUBLISHED_VERSION}`)
-					.setDestructive()
+					.setWarning()
 					.onClick(() => {
 						new ConfirmRollbackModal(this.app, FIRST_PUBLISHED_VERSION, () => {
 							void this.runRollback(button);

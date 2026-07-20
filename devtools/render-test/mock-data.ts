@@ -1,4 +1,3 @@
-import type { TFile } from "obsidian";
 import * as THREE from "three";
 import type {
 	ConstellationGroup,
@@ -8,15 +7,17 @@ import type {
 	UniverseGroup,
 } from "../../src/types";
 
-function fakeFile(path: string): TFile {
+function fakeFile(path: string) {
 	const slash = path.lastIndexOf("/");
 	const basename = slash === -1 ? path : path.slice(slash + 1);
-	// This harness never touches the real vault, so a structural stub is all
-	// StarNode.file needs — casting through unknown avoids `any` without
-	// hand-maintaining every unused TFile/TAbstractFile member.
-	return { path, basename, extension: "md" } as unknown as TFile;
+	return { path, basename, extension: "md" };
 }
 
+// This harness never touches the real vault — buildMockGalaxy() feeds these
+// straight into layoutGalaxy(), which only reads id/name/tags/position/etc,
+// never the file object itself, so a structural stub is enough. Casting the
+// whole record to StarNode (rather than the individual `file` field to
+// TFile) keeps this out of Obsidian's real vault-file APIs entirely.
 function makeStar(id: string, universe: string, weight: number, tags: string[]): StarNode {
 	const base = id.split("/").pop() ?? id;
 	return {
@@ -28,7 +29,7 @@ function makeStar(id: string, universe: string, weight: number, tags: string[]):
 		position: new THREE.Vector3(),
 		weight,
 		hue: 225,
-	};
+	} as unknown as StarNode;
 }
 
 interface GroupSpec {

@@ -1,6 +1,6 @@
 {
 	"name": "obsidian-constellations",
-	"version": "0.1.9",
+	"version": "0.1.10",
 	"description": "Notes as stars, tags as constellations, top-level folders as universes.",
 	"main": "main.js",
 	"repository": {
