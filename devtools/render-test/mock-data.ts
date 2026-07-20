@@ -1,3 +1,4 @@
+import type { TFile } from "obsidian";
 import * as THREE from "three";
 import type {
 	ConstellationGroup,
@@ -7,9 +8,13 @@ import type {
 	UniverseGroup,
 } from "../../src/types";
 
-function fakeFile(path: string) {
+function fakeFile(path: string): TFile {
 	const slash = path.lastIndexOf("/");
-	return { path, basename: slash === -1 ? path : path.slice(slash + 1), extension: "md" };
+	const basename = slash === -1 ? path : path.slice(slash + 1);
+	// This harness never touches the real vault, so a structural stub is all
+	// StarNode.file needs — casting through unknown avoids `any` without
+	// hand-maintaining every unused TFile/TAbstractFile member.
+	return { path, basename, extension: "md" } as unknown as TFile;
 }
 
 function makeStar(id: string, universe: string, weight: number, tags: string[]): StarNode {
@@ -17,8 +22,7 @@ function makeStar(id: string, universe: string, weight: number, tags: string[]):
 	return {
 		id,
 		name: base.replace(".md", ""),
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		file: fakeFile(id) as any,
+		file: fakeFile(id),
 		tags,
 		universe,
 		position: new THREE.Vector3(),

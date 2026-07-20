@@ -1153,8 +1153,7 @@ export class ConstellationsView extends ItemView {
 				0,
 				1
 			);
-			(visual.cloud.material as THREE.SpriteMaterial).opacity =
-				visual.cloudBaseOpacity * farFactor;
+			visual.cloud.material.opacity = visual.cloudBaseOpacity * farFactor;
 
 			const nearFactor = 1 - farFactor;
 			for (const { material, baseOpacity } of visual.threads) {

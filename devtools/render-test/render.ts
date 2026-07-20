@@ -369,7 +369,7 @@ async function main() {
 			const distance = cameraPos.distanceTo(visual.center);
 			const span = Math.max(1, visual.farDistance - visual.nearDistance);
 			const farFactor = THREE.MathUtils.clamp((distance - visual.nearDistance) / span, 0, 1);
-			(visual.cloud.material as THREE.SpriteMaterial).opacity = visual.cloudBaseOpacity * farFactor;
+			visual.cloud.material.opacity = visual.cloudBaseOpacity * farFactor;
 			const nearFactor = 1 - farFactor;
 			for (const { material, baseOpacity } of visual.threads) {
 				if (material instanceof THREE.ShaderMaterial) {
@@ -442,4 +442,4 @@ async function main() {
 	(window as unknown as { __ready: boolean }).__ready = true;
 }
 
-main();
+void main();
